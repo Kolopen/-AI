@@ -35,12 +35,21 @@ MANAGER_SIGNALS: list[Signal] = [
     (re.compile(r"다음 진료|예약|언제 (다시|오면)|접수"), 1.0),
 ]
 
-# 환자: 1인칭 증상 서술
+# 환자: 1인칭 서술과 수용 반응.
+# 재진 상담에서는 환자가 증상을 호소하기보다 설명을 듣고 짧게 반응하는 쪽에 가깝다.
 PATIENT_SIGNALS: list[Signal] = [
     (re.compile(r"제가|저는|저도|저한테"), 2.0),
     (re.compile(r"아파요|아픕니다|아프고|불편해요|어지러|쑤시|저려|답답"), 3.0),
+    (re.compile(r"기는 (해요|합니다|하는데|한데)"), 2.0),
+    (re.compile(r"알겠습니다|그렇군요|해야겠네요|그래야겠"), 2.0),
     (re.compile(r"잘 모르겠|그냥|글쎄|좀 그래요"), 1.5),
 ]
+
+# 비의료인 화자의 기본값. 매니저 화법이 없으면 환자로 수렴시킨다.
+PATIENT_PRIOR = 0.5
+
+# 이보다 내용이 적고 어휘 신호가 없으면 텍스트만으로는 판정하지 않는다.
+LOW_SIGNAL_CHARS = 60
 
 NURSE_SIGNALS: list[Signal] = [
     (re.compile(r"체온|혈압|재겠습니다|수납|접수|대기|성함|들어오세요"), 3.0),
@@ -72,20 +81,26 @@ def lexical_score(profile: SpeakerProfile, role: Role) -> float:
     return raw / max(1, profile.utterance_count)
 
 
-def score_speaker(profile: SpeakerProfile) -> dict[Role, float]:
-    """화자 하나에 대해 역할별 점수를 낸다."""
-    scores = {role: lexical_score(profile, role) for role in EXCLUSIVE_ROLES}
-    q_ratio = question_ratio(profile)
+def has_lexical_evidence(profile: SpeakerProfile) -> bool:
+    return any(lexical_score(profile, role) > 0 for role in EXCLUSIVE_ROLES)
 
-    # 의사는 설명이 길다. 매니저와 환자는 짧다.
+
+def score_speaker(profile: SpeakerProfile) -> dict[Role, float]:
+    """화자 하나에 대해 역할별 점수를 낸다.
+
+    구조 특징(발화 길이, 질문 비율)은 어휘 근거를 보강만 하고 역할을 새로 만들지는 않는다.
+    질문을 많이 한다고 매니저인 것이 아니라 대리 질문 화법이 있어야 매니저다.
+    """
+    scores = {role: lexical_score(profile, role) for role in EXCLUSIVE_ROLES}
+    scores[Role.PATIENT] += PATIENT_PRIOR
+
+    # 의사는 설명이 길다.
     if profile.mean_chars > 40:
         scores[Role.DOCTOR] += 1.0
-    elif profile.mean_chars < 15:
-        scores[Role.PATIENT] += 0.5
 
-    # 매니저는 질문 비율이 높고, 환자는 낮다.
-    scores[Role.MANAGER] += q_ratio * 2.0
-    scores[Role.PATIENT] -= q_ratio * 1.0
+    # 대리 질문 화법이 이미 잡힌 화자에 한해 질문 비율로 힘을 실어준다.
+    if scores[Role.MANAGER] > 0:
+        scores[Role.MANAGER] += question_ratio(profile) * 2.0
 
     return scores
 
@@ -102,66 +117,71 @@ def classify(
     profiles: list[SpeakerProfile],
     *,
     manager_speaker_tag: str | None = None,
-) -> list[SpeakerRole]:
-    """화자 목록에 역할을 배정한다.
+) -> tuple[list[SpeakerRole], list[str]]:
+    """화자 목록에 역할을 배정하고 (배정 결과, 경고) 를 돌려준다.
 
     manager_speaker_tag가 주어지면(성문 매칭 성공) 그 화자는 매니저로 고정하고
     나머지만 배정한다. 후보가 줄어드는 만큼 정확도가 크게 오른다.
     """
     if not profiles:
-        return []
+        return [], []
 
     matrix = {p.speaker_tag: score_speaker(p) for p in profiles}
+    resolved: list[SpeakerRole] = []
+    warnings: list[str] = []
+    open_profiles: list[SpeakerProfile] = []
 
-    locked: list[SpeakerRole] = []
-    open_profiles = list(profiles)
+    for profile in profiles:
+        scores = {r.value: round(s, 3) for r, s in matrix[profile.speaker_tag].items()}
 
-    if manager_speaker_tag is not None:
-        for profile in list(open_profiles):
-            if profile.speaker_tag == manager_speaker_tag:
-                locked.append(
-                    SpeakerRole(
-                        speaker_tag=profile.speaker_tag,
-                        role=Role.MANAGER,
-                        confidence=1.0,
-                        method=Method.VOICEPRINT,
-                        scores={r.value: round(s, 3) for r, s in matrix[profile.speaker_tag].items()},
-                    )
-                )
-                open_profiles.remove(profile)
+        if profile.speaker_tag == manager_speaker_tag:
+            resolved.append(
+                SpeakerRole(profile.speaker_tag, Role.MANAGER, 1.0, Method.VOICEPRINT, scores)
+            )
+        elif not has_lexical_evidence(profile) and profile.char_count < LOW_SIGNAL_CHARS:
+            resolved.append(
+                SpeakerRole(profile.speaker_tag, Role.UNKNOWN, 0.2, Method.TEXT_PATTERN, scores)
+            )
+            warnings.append(
+                f"{profile.speaker_tag}: 발화가 {profile.char_count}자뿐이고 역할 신호가 없어 "
+                "텍스트만으로 판정할 수 없습니다. 성문 매칭이나 다른 화자와의 동일인 여부 확인이 필요합니다."
+            )
+        else:
+            open_profiles.append(profile)
 
-    candidate_roles = [r for r in EXCLUSIVE_ROLES if r is not Role.MANAGER or manager_speaker_tag is None]
-    # 화자가 역할 수보다 많으면 남는 자리는 UNKNOWN으로 채운다.
-    padded = candidate_roles + [Role.UNKNOWN] * max(0, len(open_profiles) - len(candidate_roles))
+    if open_profiles:
+        candidate_roles = [
+            r for r in EXCLUSIVE_ROLES if r is not Role.MANAGER or manager_speaker_tag is None
+        ]
+        padded = candidate_roles + [Role.UNKNOWN] * max(0, len(open_profiles) - len(candidate_roles))
 
-    best: tuple[Role, ...] = ()
-    best_total = float("-inf")
-    runner_up = float("-inf")
-
-    for assignment in set(permutations(padded, len(open_profiles))):
-        total = _assignment_score(open_profiles, matrix, assignment)
-        if total > best_total:
-            runner_up, best_total, best = best_total, total, assignment
-        elif total > runner_up:
-            runner_up = total
-
-    margin = best_total - runner_up if runner_up > float("-inf") else best_total
-    confidence = _confidence_from_margin(margin)
-
-    resolved = [
-        SpeakerRole(
-            speaker_tag=profile.speaker_tag,
-            role=role,
-            confidence=confidence,
-            method=Method.TEXT_PATTERN,
-            scores={r.value: round(s, 3) for r, s in matrix[profile.speaker_tag].items()},
+        best = max(
+            set(permutations(padded, len(open_profiles))),
+            key=lambda a: _assignment_score(open_profiles, matrix, a),
         )
-        for profile, role in zip(open_profiles, best)
-    ]
 
-    return sorted(locked + resolved, key=lambda s: s.speaker_tag)
+        for profile, role in zip(open_profiles, best):
+            scores = matrix[profile.speaker_tag]
+            resolved.append(
+                SpeakerRole(
+                    speaker_tag=profile.speaker_tag,
+                    role=role,
+                    confidence=_speaker_confidence(scores, role),
+                    method=Method.TEXT_PATTERN,
+                    scores={r.value: round(s, 3) for r, s in scores.items()},
+                )
+            )
+
+    return sorted(resolved, key=lambda s: s.speaker_tag), warnings
 
 
-def _confidence_from_margin(margin: float) -> float:
-    """1·2위 배정안의 점수 차를 0~1 신뢰도로 눌러 담는다."""
+def _speaker_confidence(scores: dict[Role, float], assigned: Role) -> float:
+    """배정된 역할과 그 화자의 차순위 역할 사이의 점수 차로 낸다.
+
+    전역 배정 점수 차를 쓰면 판정 불가 화자 하나가 다른 화자의 확신까지 끌어내린다.
+    """
+    if assigned is Role.UNKNOWN:
+        return 0.2
+    others = [s for r, s in scores.items() if r is not assigned]
+    margin = scores.get(assigned, 0.0) - (max(others) if others else 0.0)
     return round(min(0.99, max(0.30, margin / (margin + 2.0))) if margin > 0 else 0.30, 2)

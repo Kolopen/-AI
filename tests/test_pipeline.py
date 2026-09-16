@@ -15,7 +15,7 @@ def load_utterances():
 
 def role_map(manager_speaker_tag=None):
     profiles = group_by_speaker(load_utterances())
-    resolved = classify(profiles, manager_speaker_tag=manager_speaker_tag)
+    resolved, _ = classify(profiles, manager_speaker_tag=manager_speaker_tag)
     return {r.speaker_tag: r.role for r in resolved}
 
 
@@ -36,9 +36,8 @@ def test_classifies_roles_from_text_alone():
 
 
 def test_voiceprint_lock_keeps_manager_fixed():
-    resolved = {
-        r.speaker_tag: r for r in classify(group_by_speaker(load_utterances()), manager_speaker_tag="speaker_1")
-    }
+    roles, _ = classify(group_by_speaker(load_utterances()), manager_speaker_tag="speaker_1")
+    resolved = {r.speaker_tag: r for r in roles}
     assert resolved["speaker_1"].role is Role.MANAGER
     assert resolved["speaker_1"].confidence == 1.0
     assert resolved["speaker_2"].role is Role.DOCTOR
