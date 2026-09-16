@@ -68,6 +68,8 @@ class SpeakerRole:
     confidence: float
     method: Method
     scores: dict[str, float] = field(default_factory=dict)
+    # 운영자 검수 큐에 올릴지. 전건을 볼 수 없으므로 신뢰도 낮은 것부터 본다.
+    needs_review: bool = False
 
 
 @dataclass

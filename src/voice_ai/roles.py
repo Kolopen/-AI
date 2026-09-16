@@ -51,6 +51,9 @@ PATIENT_PRIOR = 0.5
 # 이보다 내용이 적고 어휘 신호가 없으면 텍스트만으로는 판정하지 않는다.
 LOW_SIGNAL_CHARS = 60
 
+# 이 아래 신뢰도는 운영자 검수 큐로 올린다. 검수 결과가 학습 데이터가 된다.
+REVIEW_THRESHOLD = 0.6
+
 NURSE_SIGNALS: list[Signal] = [
     (re.compile(r"체온|혈압|재겠습니다|수납|접수|대기|성함|들어오세요"), 3.0),
 ]
@@ -140,7 +143,9 @@ def classify(
             )
         elif not has_lexical_evidence(profile) and profile.char_count < LOW_SIGNAL_CHARS:
             resolved.append(
-                SpeakerRole(profile.speaker_tag, Role.UNKNOWN, 0.2, Method.TEXT_PATTERN, scores)
+                SpeakerRole(
+                    profile.speaker_tag, Role.UNKNOWN, 0.2, Method.TEXT_PATTERN, scores, needs_review=True
+                )
             )
             warnings.append(
                 f"{profile.speaker_tag}: 발화가 {profile.char_count}자뿐이고 역할 신호가 없어 "
@@ -162,13 +167,15 @@ def classify(
 
         for profile, role in zip(open_profiles, best):
             scores = matrix[profile.speaker_tag]
+            confidence = _speaker_confidence(scores, role)
             resolved.append(
                 SpeakerRole(
                     speaker_tag=profile.speaker_tag,
                     role=role,
-                    confidence=_speaker_confidence(scores, role),
+                    confidence=confidence,
                     method=Method.TEXT_PATTERN,
                     scores={r.value: round(s, 3) for r, s in scores.items()},
+                    needs_review=confidence < REVIEW_THRESHOLD,
                 )
             )
 

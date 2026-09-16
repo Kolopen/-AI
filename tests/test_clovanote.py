@@ -78,3 +78,11 @@ def test_patient_question_pairs_with_doctor_answer():
     assert len(pairs) == 1
     assert pairs[0].asked_by is Role.PATIENT
     assert "비슷하세요" in pairs[0].answer
+
+
+def test_low_confidence_speakers_go_to_review_queue():
+    """운영자가 전건을 볼 수 없으니 확신이 낮은 판정만 큐에 올린다."""
+    _, resolved, _ = resolve()
+    assert resolved["speaker_1"].needs_review is False
+    assert resolved["speaker_2"].needs_review is True
+    assert resolved["speaker_3"].needs_review is True
