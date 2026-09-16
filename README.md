@@ -72,6 +72,22 @@ PYTHONPATH=src python3 -m pytest tests -q
 억지로 배정하는 대신 `UNKNOWN`과 경고로 넘긴다. 신뢰도도 전역이 아니라 화자별로
 계산한다. 판정 불가 화자 하나가 의사 판정의 확신까지 끌어내리면 안 된다.
 
+## 출력 계약은 `session_reports`에 맞춘다
+
+보들에는 이미 동행 특화 리포트 스키마가 있다(`bodeul.session_reports`,
+"동행 종료 시 매니저가 작성하는 진료와 복약 결과의 PostgreSQL 운영 원본").
+일반적인 SOAP 노트 대신 이 컬럼들을 그대로 채운다. `ReportDraft`가 1:1 대응이다.
+
+매니저가 손으로 쓰던 리포트를 AI가 초안으로 채우고 매니저가 확정하는 구조다.
+제품 흐름에도 맞고, 판단 책임이 사람에게 남는다는 점에서도 맞다.
+
+주의할 것이 둘 있다.
+
+- `companion_session_artifacts.purpose`는 현재 `PAYMENT_EVIDENCE`와
+  `PRESCRIPTION_IMAGE`만 허용한다. 진료 음성을 여기 보관하려면 마이그레이션이 필요하다.
+- 녹음·분석 동의는 기존 `consent` 도메인(`GuardianSharingConsent`)에 붙이는 것이
+  자연스럽다. 건강정보는 민감정보라 별도 동의가 필요하다.
+
 ## 아직 확인되지 않은 것
 
 - **화자분리 오류가 실재한다.** 앵커에서 의사 블록 안에 환자의 짧은 응답이

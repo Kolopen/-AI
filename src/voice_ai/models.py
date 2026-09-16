@@ -83,6 +83,32 @@ class QAPair:
     pre_registered_question_id: str | None = None
 
 
+class MedicationComparison(str, Enum):
+    UNSET = ""
+    MATCHED = "MATCHED"
+    CHANGED = "CHANGED"
+    RECHECK_REQUIRED = "RECHECK_REQUIRED"
+
+
+@dataclass
+class ReportDraft:
+    """보들 `bodeul.session_reports` 컬럼에 1:1로 대응한다.
+
+    매니저가 손으로 쓰던 리포트의 초안이다. 확정은 매니저가 한다.
+    """
+
+    summary: str = ""
+    treatment_notes: str = ""
+    medication_notes: str = ""
+    medication_name: str = ""
+    medication_change_summary: str = ""
+    medication_schedule_note: str = ""
+    medication_comparison_decision_code: MedicationComparison = MedicationComparison.UNSET
+    medication_comparison_note: str = ""
+    next_visit_at: str | None = None
+    next_visit_note: str = ""
+
+
 @dataclass
 class AnalysisResult:
     """온프레미스 AI가 Core API로 돌려주는 최종 산출물."""
@@ -90,4 +116,5 @@ class AnalysisResult:
     speakers: list[SpeakerRole] = field(default_factory=list)
     qa_pairs: list[QAPair] = field(default_factory=list)
     unasked_question_ids: list[str] = field(default_factory=list)
+    report_draft: ReportDraft = field(default_factory=ReportDraft)
     warnings: list[str] = field(default_factory=list)
