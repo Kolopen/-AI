@@ -1,0 +1,76 @@
+{
+  "result": "COMPLETED",
+  "message": "Succeeded",
+  "segments": [
+    {
+      "start": 0,
+      "end": 4200,
+      "text": "안녕하세요 선생님, 오늘 어머님 모시고 온 동행 매니저입니다.",
+      "confidence": 0.94,
+      "speaker": { "label": "1", "name": "A" }
+    },
+    {
+      "start": 4500,
+      "end": 8100,
+      "text": "어머님, 어디가 불편해서 오셨어요?",
+      "confidence": 0.95,
+      "speaker": { "label": "2", "name": "B" }
+    },
+    {
+      "start": 8400,
+      "end": 12000,
+      "text": "제가 요새 무릎이 좀 쑤셔요. 아침에 일어나면 많이 아파요.",
+      "confidence": 0.91,
+      "speaker": { "label": "3", "name": "C" }
+    },
+    {
+      "start": 12500,
+      "end": 22000,
+      "text": "검사 결과를 보시면 염증 수치가 조금 올라가 있어요. 항생제를 일주일 처방해 드릴게요.",
+      "confidence": 0.93,
+      "speaker": { "label": "2", "name": "B" }
+    },
+    {
+      "start": 22500,
+      "end": 29000,
+      "text": "보호자분이 여쭤봐 달라고 하셨는데요, 지금 드시는 혈압약이랑 같이 드셔도 괜찮을까요?",
+      "confidence": 0.92,
+      "speaker": { "label": "1", "name": "A" }
+    },
+    {
+      "start": 29500,
+      "end": 37000,
+      "text": "혈압약이랑 같이 드셔도 괜찮습니다. 다만 속이 쓰리면 식후에 드세요.",
+      "confidence": 0.94,
+      "speaker": { "label": "2", "name": "B" }
+    },
+    {
+      "start": 37500,
+      "end": 39500,
+      "text": "네.",
+      "confidence": 0.88,
+      "speaker": { "label": "3", "name": "C" }
+    },
+    {
+      "start": 40000,
+      "end": 44000,
+      "text": "혹시 다음 진료는 언제 오면 될까요?",
+      "confidence": 0.93,
+      "speaker": { "label": "1", "name": "A" }
+    },
+    {
+      "start": 44500,
+      "end": 49000,
+      "text": "3개월 뒤에 재검사 한번 하시죠.",
+      "confidence": 0.95,
+      "speaker": { "label": "2", "name": "B" }
+    },
+    {
+      "start": 49500,
+      "end": 54000,
+      "text": "네 메모해두겠습니다. 따님께 그대로 전달드리겠습니다.",
+      "confidence": 0.9,
+      "speaker": { "label": "1", "name": "A" }
+    }
+  ]
+}

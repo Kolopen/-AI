@@ -1,0 +1,14 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+*.egg-info/
+.pytest_cache/
+
+# 실제 진료 음성/전사는 민감정보이므로 절대 커밋하지 않는다
+data/real/
+*.m4a
+*.wav
+*.mp3
+clova_raw_*.json
