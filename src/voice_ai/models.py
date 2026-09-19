@@ -70,6 +70,8 @@ class SpeakerRole:
     scores: dict[str, float] = field(default_factory=dict)
     # 운영자 검수 큐에 올릴지. 전건을 볼 수 없으므로 신뢰도 낮은 것부터 본다.
     needs_review: bool = False
+    # 화자 과분할로 이 화자와 한 사람으로 합쳐진 다른 태그들.
+    merged_from: list[str] = field(default_factory=list)
 
 
 @dataclass

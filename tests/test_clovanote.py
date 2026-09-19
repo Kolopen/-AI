@@ -8,6 +8,7 @@ from voice_ai.clova import group_by_speaker
 from voice_ai.clovanote import parse
 from voice_ai.models import Role
 from voice_ai.qa import pair_qa
+from voice_ai.refine import flag_foreign_sentences
 from voice_ai.roles import classify
 
 # 재진 상담. 환자는 듣는 쪽이고, 자기 상태를 직접 묻는다.
@@ -31,7 +32,7 @@ FOLLOW_UP_VISIT = """참석자 1 00:00
 참석자 1 00:57
 그런 건 아니고 비슷하세요. 비슷한 정도인데 그때도 약을 두 달분 드셨었잖아요.
 매일 하루에 하나씩만 드시면 되니까 그거 드시면 좀 빨리 내려갈 것 같긴 해요.
-두 달 분 드렸으니까 잘 챙겨 드시고 또 필요하시면 얘기해 주십시오.
+알겠습니다. 두 달 분 드렸으니까 잘 챙겨 드시고 또 필요하시면 얘기해 주십시오.
 
 참석자 3 01:30
 네 감사합니다. 명절 잘 보내시고요. 감사합니다.
@@ -86,3 +87,36 @@ def test_low_confidence_speakers_go_to_review_queue():
     assert resolved["speaker_1"].needs_review is False
     assert resolved["speaker_2"].needs_review is True
     assert resolved["speaker_3"].needs_review is True
+
+
+def test_merging_non_doctor_speakers_resolves_over_segmentation():
+    """화자분리가 한 사람을 둘로 쪼갠 경우. 의사만 분리되면 나머지는 합쳐도 된다."""
+    utterances = parse(FOLLOW_UP_VISIT)
+    roles, _ = classify(group_by_speaker(utterances), merge_non_doctor=True)
+    resolved = {r.speaker_tag: r for r in roles}
+
+    assert resolved["speaker_1"].role is Role.DOCTOR
+    assert resolved["speaker_2"].role is Role.PATIENT
+    assert resolved["speaker_3"].role is Role.PATIENT
+    assert resolved["speaker_3"].merged_from == ["speaker_2"]
+
+
+def test_patient_reply_absorbed_into_doctor_block_is_flagged():
+    """CLOVA가 의사 블록에 흡수해버린 환자 응답을 텍스트로 잡아낸다."""
+    profiles = group_by_speaker(parse(FOLLOW_UP_VISIT))
+    doctor = next(p for p in profiles if p.speaker_tag == "speaker_1")
+
+    flagged = flag_foreign_sentences(doctor, Role.DOCTOR)
+
+    assert [f.sentence for f in flagged] == ["알겠습니다."]
+    assert flagged[0].suspected_role is Role.PATIENT
+
+
+def test_doctor_explanation_is_not_flagged_as_foreign():
+    """'같기는 해요' 같은 의사의 추측 표현을 환자 화법으로 오인하지 않는다."""
+    profiles = group_by_speaker(parse(FOLLOW_UP_VISIT))
+    doctor = next(p for p in profiles if p.speaker_tag == "speaker_1")
+
+    flagged = {f.sentence for f in flag_foreign_sentences(doctor, Role.DOCTOR)}
+
+    assert not any("같긴 해요" in s for s in flagged)
