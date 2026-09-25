@@ -76,21 +76,52 @@ Q&A 매칭이 추론이 아니라 대조가 되고, 매니저가 빠뜨린 질�
 | `src/voice_ai/roles.py` | 의사 우선 판정 + 나머지 역할 배정 + 신뢰도 |
 | `src/voice_ai/refine.py` | 의사 블록에 흡수된 타 화자 발화 표시 |
 | `src/voice_ai/terms.py` | 의료 용어 오인식 교정 (자모 유사도 + 문서 내 근거) |
+| `src/voice_ai/transcribe.py` | 녹음 파일 → SenseVoice 전사 (CLI) |
 | `src/voice_ai/analyze.py` | 전사 하나를 끝까지 돌리는 진입점 (CLI) |
 | `src/voice_ai/sensevoice.py` | SenseVoice 출력 정규화 (태그 제거, 언어 불일치 경고) |
 | `src/voice_ai/diarization.py` | 별도 화자분리(pyannote 등) 결과를 전사와 타임스탬프로 정렬 |
 | `src/voice_ai/qa.py` | 질문-답변 페어링, 사전질문 대조 |
 | `src/voice_ai/models.py` | 공유 데이터 모델과 출력 계약 |
 
-## 실행
+## 전사 준비
 
-전사 파일 하나를 넣으면 역할 판정부터 용어 교정까지 돈다. 화자 라벨이 있으면
-화자 단위로, 없으면(SenseVoice 등) 문장 단위로 가른다.
+한 번만 하면 된다. 모델 두 개를 받는다.
 
 ```bash
-PYTHONPATH=src python3 -m voice_ai.analyze 전사.txt        # 클로바노트 내보내기
-PYTHONPATH=src python3 -m voice_ai.analyze chunks.json     # SenseVoice 출력
-PYTHONPATH=src python3 -m voice_ai.analyze 전사.txt --json
+pip install -r requirements.txt
+
+# 음성인식 — 파일명의 ko가 한국어 포함을 뜻한다
+wget https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17.tar.bz2
+tar xvf sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17.tar.bz2
+
+# 발화 구간 검출 — 긴 녹음을 잘라 준다
+wget https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx
+```
+
+SenseVoice를 쓰는 이유는 한국어를 지원하는 비스트리밍 모델이 사실상 이것뿐이기
+때문이다. FireRedASR과 Paraformer는 중국어, Zipformer는 영어 전용이다.
+MIT 라이선스이고 비자기회귀 구조라 Whisper Large보다 빠르다.
+
+## 실행
+
+두 단계다. 녹음 파일을 전사하고, 전사를 분석한다.
+
+```bash
+# 1. 전사 — m4a, wav, mp3 무엇이든 받는다
+PYTHONPATH=src python3 -m voice_ai.transcribe 진료녹음.m4a \
+  --model sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17/model.int8.onnx \
+  --tokens sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17/tokens.txt \
+  --vad silero_vad.onnx
+
+# 2. 분석
+PYTHONPATH=src python3 -m voice_ai.analyze chunks.json
+```
+
+전사를 이미 갖고 있다면 1단계를 건너뛴다.
+
+```bash
+PYTHONPATH=src python3 -m voice_ai.analyze 클로바노트내보내기.txt
+PYTHONPATH=src python3 -m voice_ai.analyze chunks.json --json
 ```
 
 ## 검증
