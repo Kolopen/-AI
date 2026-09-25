@@ -22,7 +22,14 @@ DOCTOR_SIGNALS: list[Signal] = [
     (re.compile(r"하시면 됩니다|하셔야|중단하시|끊으시|유지하시"), 2.5),
     (re.compile(r"보시면|결과가|결과를 보니|지금 보니|말씀드리면"), 1.5),
     (re.compile(r"언제부터|어디가|어떻게 아프|불편하신|아프신|드시고 계신"), 2.0),
+    # 주체 높임. 의사는 환자의 행위를 높이고, 환자는 자기 행위를 높이지 않는다.
+    # 이 방향성이 두 사람을 가르는 가장 넓은 신호다.
+    (re.compile(r"시면|시고|시니|시는|신데|시죠|시잖|셔야|셔서|셨|세요|십시오|으시"), 2.0),
 ]
+
+# 인사말에서는 환자도 상대를 높인다("추석 잘 보내시고요"). 주체 높임이 뒤집히는
+# 유일한 자리이고, 리포트에 담을 내용도 없으므로 아예 분류에서 뺀다.
+GREETING = re.compile(r"감사합니다|고맙습니다|안녕히|수고하세|잘 보내|다음에 또|들어가세요")
 
 # 매니저: 대리 질문 프레임과 3인칭 환자 지칭
 MANAGER_SIGNALS: list[Signal] = [
@@ -74,6 +81,16 @@ EXCLUSIVE_ROLES = (Role.DOCTOR, Role.MANAGER, Role.PATIENT, Role.NURSE)
 
 QUESTION_PATTERN = re.compile(r"\?|까요|나요|가요|습니까|ㅂ니까|인가요|은지요")
 
+_SENTENCE_BOUNDARY = re.compile(r"(?<=[.!?])\s+")
+
+
+def split_sentences(text: str) -> list[str]:
+    return [s.strip() for s in _SENTENCE_BOUNDARY.split(text) if s.strip()]
+
+
+def _without_greetings(text: str) -> str:
+    return " ".join(s for s in split_sentences(text) if not GREETING.search(s))
+
 
 def question_ratio(profile: SpeakerProfile) -> float:
     if not profile.utterance_count:
@@ -83,7 +100,7 @@ def question_ratio(profile: SpeakerProfile) -> float:
 
 
 def lexical_score(profile: SpeakerProfile, role: Role) -> float:
-    text = profile.text
+    text = _without_greetings(profile.text)
     raw = sum(weight * len(pattern.findall(text)) for pattern, weight in SIGNALS[role])
     return raw / max(1, profile.utterance_count)
 
@@ -110,6 +127,40 @@ def score_speaker(profile: SpeakerProfile) -> dict[Role, float]:
         scores[Role.MANAGER] += question_ratio(profile) * 2.0
 
     return scores
+
+
+# 의학 용어 하나가 문장 단위 판정에 주는 가중치.
+MEDICAL_TERM_WEIGHT = 1.5
+
+
+def sentence_role(
+    sentence: str, *, medical_terms: frozenset[str] = frozenset()
+) -> tuple[Role, float]:
+    """문장 하나의 역할을 점수로 가른다. 화자분리 없이 전사문만 있을 때 쓴다.
+
+    의사와 비의사는 화법이 극단적으로 달라서 문장만 보고도 대부분 갈린다.
+    다만 "네", "맞습니다" 같은 짧은 맞장구는 텍스트에 단서가 없어 가를 수 없다.
+    그런 문장은 UNKNOWN으로 두는데, 리포트에 담을 내용이 없으므로 손해가 아니다.
+
+    인사말은 주체 높임이 뒤집히는 자리라 아예 판정하지 않는다.
+    """
+    if GREETING.search(sentence):
+        return Role.UNKNOWN, 0.0
+
+    doctor = sum(w * len(p.findall(sentence)) for p, w in SIGNALS[Role.DOCTOR])
+    doctor += MEDICAL_TERM_WEIGHT * sum(1 for term in medical_terms if term in sentence)
+
+    other_role, other_score = Role.UNKNOWN, 0.0
+    for role in (Role.PATIENT, Role.MANAGER, Role.NURSE):
+        score = sum(w * len(p.findall(sentence)) for p, w in SIGNALS[role])
+        if score > other_score:
+            other_role, other_score = role, score
+
+    if doctor == 0 and other_score == 0:
+        return Role.UNKNOWN, 0.0
+    if doctor > other_score:
+        return Role.DOCTOR, _margin_to_confidence(doctor - other_score)
+    return other_role, _margin_to_confidence(other_score - doctor)
 
 
 def doctor_score(profile: SpeakerProfile) -> float:

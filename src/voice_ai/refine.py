@@ -13,9 +13,7 @@ import re
 from dataclasses import dataclass
 
 from .models import Role, SpeakerProfile
-from .roles import SIGNALS
-
-_SENTENCE_BOUNDARY = re.compile(r"(?<=[.!?])\s+")
+from .roles import GREETING, SIGNALS, split_sentences
 
 
 @dataclass
@@ -28,10 +26,6 @@ class ForeignSentence:
     assigned_role: Role
     suspected_role: Role
     score: float
-
-
-def split_sentences(text: str) -> list[str]:
-    return [s.strip() for s in _SENTENCE_BOUNDARY.split(text) if s.strip()]
 
 
 def _sentence_score(sentence: str, role: Role) -> float:
@@ -55,6 +49,8 @@ def flag_foreign_sentences(
 
     for utterance in profile.utterances:
         for sentence in split_sentences(utterance.text):
+            if GREETING.search(sentence):
+                continue
             own = _sentence_score(sentence, assigned_role)
             if own > 0:
                 continue

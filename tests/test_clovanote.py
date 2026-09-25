@@ -9,7 +9,7 @@ from voice_ai.clovanote import parse
 from voice_ai.models import Role
 from voice_ai.qa import pair_qa
 from voice_ai.refine import flag_foreign_sentences
-from voice_ai.roles import classify
+from voice_ai.roles import classify, sentence_role
 
 # 재진 상담. 환자는 듣는 쪽이고, 자기 상태를 직접 묻는다.
 FOLLOW_UP_VISIT = """참석자 1 00:00
@@ -120,3 +120,39 @@ def test_doctor_explanation_is_not_flagged_as_foreign():
     flagged = {f.sentence for f in flag_foreign_sentences(doctor, Role.DOCTOR)}
 
     assert not any("같긴 해요" in s for s in flagged)
+
+
+# 화자분리 없이 전사문만 있을 때. 앵커에서 실제로 나온 문장들이다.
+MEDICAL_TERMS = frozenset({"지방간", "콜레스테롤", "고지혈증", "내장지방", "빈혈"})
+
+
+def test_doctor_sentences_are_identified_without_diarization():
+    """주체 높임과 의학 용어만으로 의사 문장을 가른다."""
+    for sentence in [
+        "간 수치가 정상보다 좀 높으시니까 그 간 보호제 있잖아요.",
+        "매일 하루에 하나씩만 드시면 되니까 그거 드시면 좀 빨리 내려갈 것 같아요.",
+        "콜레스테롤이 200이 정상인데 216이니까 약간 높습니다.",
+    ]:
+        role, confidence = sentence_role(sentence, medical_terms=MEDICAL_TERMS)
+        assert role is Role.DOCTOR, sentence
+        assert confidence > 0.3
+
+
+def test_patient_sentences_are_identified_without_diarization():
+    for sentence in ["요즘 많이 안 먹기는 해요.", "알겠습니다.", "운동 열심히 해야겠네요."]:
+        role, _ = sentence_role(sentence, medical_terms=MEDICAL_TERMS)
+        assert role is Role.PATIENT, sentence
+
+
+def test_greeting_is_not_classified():
+    """인사말에서는 환자도 상대를 높인다. 주체 높임이 뒤집히는 유일한 자리다."""
+    role, _ = sentence_role("네 추석 잘 보내시고요.", medical_terms=MEDICAL_TERMS)
+
+    assert role is Role.UNKNOWN
+
+
+def test_short_backchannel_is_left_unknown():
+    """텍스트에 단서가 없다. 다만 리포트에 담을 내용도 없어 손해가 아니다."""
+    for sentence in ["네.", "맞습니다.", "그럼요."]:
+        role, _ = sentence_role(sentence, medical_terms=MEDICAL_TERMS)
+        assert role is Role.UNKNOWN, sentence
