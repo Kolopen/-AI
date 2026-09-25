@@ -83,35 +83,39 @@ Q&A 매칭이 추론이 아니라 대조가 되고, 매니저가 빠뜨린 질�
 | `src/voice_ai/qa.py` | 질문-답변 페어링, 사전질문 대조 |
 | `src/voice_ai/models.py` | 공유 데이터 모델과 출력 계약 |
 
-## 설치
+## 설치 (macOS)
 
-한 번만 하면 된다. `-e .`로 설치하면 `PYTHONPATH`를 매번 지정하지 않아도 된다.
-
-```powershell
-# Windows PowerShell
-pip install -e ".[transcribe,dev]"
-```
+가상환경을 먼저 만든다. Homebrew로 깐 파이썬은 시스템 전체 설치를 막아서
+(`externally-managed-environment`) 가상환경 없이는 pip이 거부한다.
 
 ```bash
-# macOS / Linux
+python3 -m venv .venv
+source .venv/bin/activate
+
 pip install -e ".[transcribe,dev]"
 ```
+
+이후 새 터미널을 열 때마다 `source .venv/bin/activate` 한 번만 해주면 된다.
+`-e .`로 설치했으므로 `PYTHONPATH`는 지정하지 않아도 된다.
+
+<details>
+<summary>Windows PowerShell</summary>
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -e ".[transcribe,dev]"
+```
+</details>
 
 ## 전사 준비
 
 모델 두 개를 받는다. 역시 한 번만 하면 된다.
 
-```powershell
-# Windows PowerShell — curl.exe와 tar는 Windows 10 이상에 기본 포함돼 있다
-curl.exe -L -O https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17.tar.bz2
-tar -xf sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17.tar.bz2
-curl.exe -L -O https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx
-```
-
 ```bash
-# macOS / Linux
 curl -L -O https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17.tar.bz2
 tar -xf sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17.tar.bz2
+
 curl -L -O https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx
 ```
 
@@ -121,20 +125,9 @@ MIT 라이선스이고 비자기회귀 구조라 Whisper Large보다 빠르다.
 
 ## 실행
 
-두 단계다. 녹음 파일을 전사하고, 전사를 분석한다. 명령 이름은 OS와 무관하다.
-
-```powershell
-# Windows PowerShell — 줄 잇기는 백틱
-voice-transcribe 진료녹음.m4a `
-  --model sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17\model.int8.onnx `
-  --tokens sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17\tokens.txt `
-  --vad silero_vad.onnx
-
-voice-analyze chunks.json
-```
+두 단계다. 녹음 파일을 전사하고, 전사를 분석한다.
 
 ```bash
-# macOS / Linux — 줄 잇기는 역슬래시
 voice-transcribe 진료녹음.m4a \
   --model sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17/model.int8.onnx \
   --tokens sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17/tokens.txt \
@@ -143,9 +136,11 @@ voice-transcribe 진료녹음.m4a \
 voice-analyze chunks.json
 ```
 
+Apple Silicon이면 `--threads`를 성능 코어 수에 맞춰 올리면 빨라진다(M1/M2 기본형은 4).
+
 전사를 이미 갖고 있다면 1단계를 건너뛴다.
 
-```
+```bash
 voice-analyze 클로바노트내보내기.txt
 voice-analyze chunks.json --json
 ```
