@@ -83,19 +83,36 @@ Q&A 매칭이 추론이 아니라 대조가 되고, 매니저가 빠뜨린 질�
 | `src/voice_ai/qa.py` | 질문-답변 페어링, 사전질문 대조 |
 | `src/voice_ai/models.py` | 공유 데이터 모델과 출력 계약 |
 
-## 전사 준비
+## 설치
 
-한 번만 하면 된다. 모델 두 개를 받는다.
+한 번만 하면 된다. `-e .`로 설치하면 `PYTHONPATH`를 매번 지정하지 않아도 된다.
+
+```powershell
+# Windows PowerShell
+pip install -e ".[transcribe,dev]"
+```
 
 ```bash
-pip install -r requirements.txt
+# macOS / Linux
+pip install -e ".[transcribe,dev]"
+```
 
-# 음성인식 — 파일명의 ko가 한국어 포함을 뜻한다
-wget https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17.tar.bz2
-tar xvf sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17.tar.bz2
+## 전사 준비
 
-# 발화 구간 검출 — 긴 녹음을 잘라 준다
-wget https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx
+모델 두 개를 받는다. 역시 한 번만 하면 된다.
+
+```powershell
+# Windows PowerShell — curl.exe와 tar는 Windows 10 이상에 기본 포함돼 있다
+curl.exe -L -O https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17.tar.bz2
+tar -xf sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17.tar.bz2
+curl.exe -L -O https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx
+```
+
+```bash
+# macOS / Linux
+curl -L -O https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17.tar.bz2
+tar -xf sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17.tar.bz2
+curl -L -O https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx
 ```
 
 SenseVoice를 쓰는 이유는 한국어를 지원하는 비스트리밍 모델이 사실상 이것뿐이기
@@ -104,30 +121,39 @@ MIT 라이선스이고 비자기회귀 구조라 Whisper Large보다 빠르다.
 
 ## 실행
 
-두 단계다. 녹음 파일을 전사하고, 전사를 분석한다.
+두 단계다. 녹음 파일을 전사하고, 전사를 분석한다. 명령 이름은 OS와 무관하다.
+
+```powershell
+# Windows PowerShell — 줄 잇기는 백틱
+voice-transcribe 진료녹음.m4a `
+  --model sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17\model.int8.onnx `
+  --tokens sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17\tokens.txt `
+  --vad silero_vad.onnx
+
+voice-analyze chunks.json
+```
 
 ```bash
-# 1. 전사 — m4a, wav, mp3 무엇이든 받는다
-PYTHONPATH=src python3 -m voice_ai.transcribe 진료녹음.m4a \
+# macOS / Linux — 줄 잇기는 역슬래시
+voice-transcribe 진료녹음.m4a \
   --model sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17/model.int8.onnx \
   --tokens sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17/tokens.txt \
   --vad silero_vad.onnx
 
-# 2. 분석
-PYTHONPATH=src python3 -m voice_ai.analyze chunks.json
+voice-analyze chunks.json
 ```
 
 전사를 이미 갖고 있다면 1단계를 건너뛴다.
 
-```bash
-PYTHONPATH=src python3 -m voice_ai.analyze 클로바노트내보내기.txt
-PYTHONPATH=src python3 -m voice_ai.analyze chunks.json --json
+```
+voice-analyze 클로바노트내보내기.txt
+voice-analyze chunks.json --json
 ```
 
 ## 검증
 
-```bash
-PYTHONPATH=src python3 -m pytest tests -q
+```
+pytest -q
 ```
 
 ## 실제 녹음에서 배운 것
