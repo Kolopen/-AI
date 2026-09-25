@@ -76,9 +76,22 @@ Q&A 매칭이 추론이 아니라 대조가 되고, 매니저가 빠뜨린 질�
 | `src/voice_ai/roles.py` | 의사 우선 판정 + 나머지 역할 배정 + 신뢰도 |
 | `src/voice_ai/refine.py` | 의사 블록에 흡수된 타 화자 발화 표시 |
 | `src/voice_ai/terms.py` | 의료 용어 오인식 교정 (자모 유사도 + 문서 내 근거) |
+| `src/voice_ai/analyze.py` | 전사 하나를 끝까지 돌리는 진입점 (CLI) |
+| `src/voice_ai/sensevoice.py` | SenseVoice 출력 정규화 (태그 제거, 언어 불일치 경고) |
 | `src/voice_ai/diarization.py` | 별도 화자분리(pyannote 등) 결과를 전사와 타임스탬프로 정렬 |
 | `src/voice_ai/qa.py` | 질문-답변 페어링, 사전질문 대조 |
 | `src/voice_ai/models.py` | 공유 데이터 모델과 출력 계약 |
+
+## 실행
+
+전사 파일 하나를 넣으면 역할 판정부터 용어 교정까지 돈다. 화자 라벨이 있으면
+화자 단위로, 없으면(SenseVoice 등) 문장 단위로 가른다.
+
+```bash
+PYTHONPATH=src python3 -m voice_ai.analyze 전사.txt        # 클로바노트 내보내기
+PYTHONPATH=src python3 -m voice_ai.analyze chunks.json     # SenseVoice 출력
+PYTHONPATH=src python3 -m voice_ai.analyze 전사.txt --json
+```
 
 ## 검증
 
