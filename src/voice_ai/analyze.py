@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from dataclasses import asdict
 from pathlib import Path
@@ -92,6 +93,28 @@ def analyze_without_speakers(
 # 이보다 많은 비의사 화자가 판정 불가로 남으면 화자분리가 한 사람을 쪼갠 쪽을 의심한다.
 _SPLIT_SUSPICION = 2
 
+# 띄어쓰기 없이 이어진 한글이 이보다 길면 엔진이 띄어쓰기를 안 내놓은 것으로 본다.
+# 한국어 어절은 열 자를 넘는 일이 드물다.
+_UNSPACED_RUN = 25
+_UNSPACED = re.compile(rf"[가-힣]{{{_UNSPACED_RUN},}}")
+
+
+def _spacing_warning(utterances: list[Utterance]) -> str | None:
+    """띄어쓰기 없는 전사는 뒤 단계를 조용히 무너뜨린다.
+
+    용어 교정은 어절을 후보로 삼으므로 통째로 붙은 글에서는 한 건도 못 찾고,
+    리포트는 문장을 못 갈라 한 문단을 여러 항목에 그대로 집어넣는다. 결과가
+    비는 것이 아니라 그럴듯하게 틀리기 때문에 알려야 한다.
+    """
+    longest = max((len(m.group()) for u in utterances for m in _UNSPACED.finditer(u.text)), default=0)
+    if longest < _UNSPACED_RUN:
+        return None
+    return (
+        f"전사에 띄어쓰기가 없습니다(붙어 있는 한글 최대 {longest}자). "
+        "용어 교정과 문장 분리가 동작하지 않아 리포트가 부정확해집니다. "
+        "띄어쓰기를 내놓는 엔진(sensevoice)을 쓰는 편이 낫습니다."
+    )
+
 
 def analyze_with_speakers(
     utterances: list[Utterance],
@@ -103,6 +126,9 @@ def analyze_with_speakers(
     speakers, warnings = classify(
         group_by_speaker(utterances), merge_non_doctor=merge_non_doctor
     )
+    spacing = _spacing_warning(utterances)
+    if spacing:
+        warnings.append(spacing)
     roles = {s.speaker_tag: s.role for s in speakers}
 
     # 판정 불가가 쌓이면 Q&A가 통째로 비게 된다. 질문자를 특정하지 못하기 때문이다.

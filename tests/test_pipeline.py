@@ -131,3 +131,41 @@ def test_merging_recovers_a_question_that_was_lost():
     assert len(pairs) == 1
     assert pairs[0].question == "그럼 언제까지 하나요?"
     assert "두 달" in pairs[0].answer
+
+
+def test_unspaced_transcript_is_called_out():
+    """zipformer-korean 은 띄어쓰기 없이 내놓는다.
+
+    용어 교정은 어절을 후보로 삼으므로 한 건도 못 찾고, 리포트는 문장을 못 갈라
+    같은 문단을 여러 항목에 넣는다. 결과가 비는 게 아니라 그럴듯하게 틀린다.
+    """
+    from voice_ai import terminology
+    from voice_ai.analyze import analyze_with_speakers
+    from voice_ai.models import Utterance
+
+    blob = "그건높긴한데요구땜에약정도아니에요근데저번에말씀드건전수치는높죠근데작년에는"
+    result = analyze_with_speakers(
+        [
+            Utterance("speaker_00", 0, 9_000, blob),
+            Utterance("speaker_01", 9_000, 10_000, "네."),
+        ],
+        terms=terminology.load("내과"),
+    )
+
+    assert any("띄어쓰기가 없습니다" in w for w in result.warnings)
+
+
+def test_spaced_transcript_is_not_warned_about():
+    from voice_ai import terminology
+    from voice_ai.analyze import analyze_with_speakers
+    from voice_ai.models import Utterance
+
+    result = analyze_with_speakers(
+        [
+            Utterance("speaker_00", 0, 9_000, "피검사에서는 신장이라든지 빈혈은 괜찮으시고요."),
+            Utterance("speaker_01", 9_000, 10_000, "네."),
+        ],
+        terms=terminology.load("내과"),
+    )
+
+    assert not any("띄어쓰기" in w for w in result.warnings)
