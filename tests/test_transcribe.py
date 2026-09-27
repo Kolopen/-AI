@@ -108,3 +108,66 @@ def test_pieces_cover_the_whole_segment():
     pieces = _split_long(signal, 5 * SAMPLE_RATE)
 
     assert sum(len(piece) for _, piece in pieces) == len(signal)
+
+
+class _Recorder:
+    """설정 객체가 어떤 인자로 만들어졌는지 기록만 한다."""
+
+    def __init__(self, seen: dict, name: str):
+        self._seen = seen
+        self._name = name
+
+    def __call__(self, **kwargs):
+        self._seen[self._name] = kwargs
+        return kwargs
+
+
+def _fake_sherpa_onnx(seen: dict):
+    import types
+
+    module = types.ModuleType("sherpa_onnx")
+    for name in (
+        "OfflineSpeakerSegmentationModelConfig",
+        "OfflineSpeakerSegmentationPyannoteModelConfig",
+        "SpeakerEmbeddingExtractorConfig",
+        "FastClusteringConfig",
+    ):
+        setattr(module, name, _Recorder(seen, name))
+
+    def diarization_config(**kwargs):
+        return types.SimpleNamespace(validate=lambda: True, **kwargs)
+
+    class Diarization:
+        def __init__(self, config):
+            pass
+
+        def process(self, audio):
+            return types.SimpleNamespace(sort_by_start_time=lambda: [])
+
+    module.OfflineSpeakerDiarizationConfig = diarization_config
+    module.OfflineSpeakerDiarization = Diarization
+    return module
+
+
+def test_diarization_uses_every_thread_it_was_given(monkeypatch):
+    """분할·임베딩 모델의 num_threads 기본값은 1이다.
+
+    넘기지 않으면 코어 하나로 돌아서, 전사보다 화자분리가 더 오래 걸린다.
+    실제로 맥에서 99% CPU만 쓰고 있었다.
+    """
+    import sys
+
+    from voice_ai.transcribe import diarize
+
+    seen: dict = {}
+    monkeypatch.setitem(sys.modules, "sherpa_onnx", _fake_sherpa_onnx(seen))
+
+    diarize(
+        np.zeros(SAMPLE_RATE, dtype=np.float32),
+        segmentation_model=Path("segmentation.onnx"),
+        embedding_model=Path("embedding.onnx"),
+        num_threads=6,
+    )
+
+    assert seen["OfflineSpeakerSegmentationModelConfig"]["num_threads"] == 6
+    assert seen["SpeakerEmbeddingExtractorConfig"]["num_threads"] == 6

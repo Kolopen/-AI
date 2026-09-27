@@ -100,6 +100,7 @@ def diarize(
     embedding_model: Path,
     num_speakers: int = -1,
     cluster_threshold: float = 0.5,
+    num_threads: int = 4,
 ) -> list[tuple[str, int, int]]:
     """누가 언제 말했는지 (화자, 시작ms, 끝ms) 로 돌려준다.
 
@@ -113,8 +114,13 @@ def diarize(
             pyannote=sherpa_onnx.OfflineSpeakerSegmentationPyannoteModelConfig(
                 model=str(segmentation_model), window_shift_ratio=0.1
             ),
+            # 지정하지 않으면 1이다. 분할은 창을 10%씩 밀며 반복 추론해서
+            # 전사보다 오래 걸리는데, 코어 하나만 쓰면 그만큼 더 기다린다.
+            num_threads=num_threads,
         ),
-        embedding=sherpa_onnx.SpeakerEmbeddingExtractorConfig(model=str(embedding_model)),
+        embedding=sherpa_onnx.SpeakerEmbeddingExtractorConfig(
+            model=str(embedding_model), num_threads=num_threads
+        ),
         clustering=sherpa_onnx.FastClusteringConfig(
             num_clusters=num_speakers, threshold=cluster_threshold
         ),
@@ -294,6 +300,7 @@ def main(argv: list[str] | None = None) -> int:
             segmentation_model=args.segmentation,
             embedding_model=args.embedding,
             num_speakers=args.speakers,
+            num_threads=args.threads,
         )
         speakers = sorted({speaker for speaker, _, _ in turns})
         print(f"화자 {len(speakers)}명, 발언 {len(turns)}구간을 찾았습니다. 전사를 시작합니다.")
