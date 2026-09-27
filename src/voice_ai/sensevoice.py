@@ -85,7 +85,8 @@ def parse_chunks(
 
         utterances.append(
             Utterance(
-                speaker_tag="",  # SenseVoice는 화자를 구분하지 않는다.
+                # SenseVoice 자체는 화자를 구분하지 않는다. 화자분리를 앞에 붙였을 때만 채워진다.
+                speaker_tag=chunk.get("speaker") or "",
                 start_ms=start_ms,
                 end_ms=int(chunk.get("end_ms") or start_ms),
                 text=text,

@@ -114,9 +114,16 @@ pip install -e ".[transcribe,dev]"
 모델 두 개를 받는다. 역시 한 번만 하면 된다.
 
 ```bash
+# 음성인식
 curl -L -O https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17.tar.bz2
 tar -xf sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17.tar.bz2
 
+# 화자분리
+curl -L -O https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-segmentation-models/sherpa-onnx-pyannote-segmentation-3-0.tar.bz2
+tar -xf sherpa-onnx-pyannote-segmentation-3-0.tar.bz2
+curl -L -O https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/3dspeaker_speech_eres2net_base_sv_zh-cn_3dspeaker_16k.onnx
+
+# 발화 구간 검출 (화자분리를 안 쓸 때만)
 curl -L -O https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx
 ```
 
@@ -132,10 +139,19 @@ MIT 라이선스이고 비자기회귀 구조라 Whisper Large보다 빠르다.
 voice-transcribe 진료녹음.m4a \
   --model sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17/model.int8.onnx \
   --tokens sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17/tokens.txt \
-  --vad silero_vad.onnx
+  --segmentation sherpa-onnx-pyannote-segmentation-3-0/model.onnx \
+  --embedding 3dspeaker_speech_eres2net_base_sv_zh-cn_3dspeaker_16k.onnx \
+  --speakers 2
 
 voice-analyze chunks.json
 ```
+
+`--speakers`로 인원을 알려주면 정확도가 오른다. 진료는 보통 2명(의사·환자),
+매니저가 동행하면 3명이다. 모르면 생략하거나 `-1`을 준다.
+
+화자분리 없이 VAD로만 끊을 수도 있지만(`--vad silero_vad.onnx`), 실제 녹음에서
+구간 경계가 화자 전환점과 어긋나 의사 발언 끝에 환자 응답이 붙었다. 역할 판정이
+목적이라면 화자분리를 쓰는 편이 낫다.
 
 Apple Silicon이면 `--threads`를 성능 코어 수에 맞춰 올리면 빨라진다(M1/M2 기본형은 4).
 

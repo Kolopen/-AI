@@ -76,6 +76,83 @@ def _split_long(samples: np.ndarray, max_samples: int) -> list[tuple[int, np.nda
     return pieces
 
 
+def diarize(
+    audio: np.ndarray,
+    *,
+    segmentation_model: Path,
+    embedding_model: Path,
+    num_speakers: int = -1,
+    cluster_threshold: float = 0.5,
+) -> list[tuple[str, int, int]]:
+    """누가 언제 말했는지 (화자, 시작ms, 끝ms) 로 돌려준다.
+
+    VAD로 기계적으로 끊으면 구간 경계가 화자 전환점과 어긋나 의사 발언 끝에
+    환자 응답이 붙는다. 화자분리로 끊으면 구간이 곧 발언권이 된다.
+    """
+    import sherpa_onnx
+
+    config = sherpa_onnx.OfflineSpeakerDiarizationConfig(
+        segmentation=sherpa_onnx.OfflineSpeakerSegmentationModelConfig(
+            pyannote=sherpa_onnx.OfflineSpeakerSegmentationPyannoteModelConfig(
+                model=str(segmentation_model), window_shift_ratio=0.1
+            ),
+        ),
+        embedding=sherpa_onnx.SpeakerEmbeddingExtractorConfig(model=str(embedding_model)),
+        clustering=sherpa_onnx.FastClusteringConfig(
+            num_clusters=num_speakers, threshold=cluster_threshold
+        ),
+        min_duration_on=0.3,
+        min_duration_off=0.5,
+    )
+    if not config.validate():
+        raise RuntimeError("화자분리 설정이 올바르지 않습니다. 모델 경로를 확인하세요.")
+
+    result = sherpa_onnx.OfflineSpeakerDiarization(config).process(audio).sort_by_start_time()
+    return [
+        (f"speaker_{turn.speaker:02d}", round(turn.start * 1000), round(turn.end * 1000))
+        for turn in result
+    ]
+
+
+def transcribe_turns(
+    audio: np.ndarray,
+    turns: list[tuple[str, int, int]],
+    *,
+    model: Path,
+    tokens: Path,
+    num_threads: int = 4,
+) -> list[dict]:
+    """화자분리가 잡아준 구간마다 전사한다. 구간이 곧 한 사람의 발언이다."""
+    import sherpa_onnx
+
+    recognizer = sherpa_onnx.OfflineRecognizer.from_sense_voice(
+        model=str(model), tokens=str(tokens), num_threads=num_threads, use_itn=True
+    )
+
+    chunks: list[dict] = []
+    for speaker, start_ms, end_ms in turns:
+        piece = audio[int(start_ms * SAMPLE_RATE / 1000) : int(end_ms * SAMPLE_RATE / 1000)]
+        if len(piece) < SAMPLE_RATE // 10:  # 0.1초 미만은 버린다
+            continue
+
+        stream = recognizer.create_stream()
+        stream.accept_waveform(SAMPLE_RATE, piece)
+        recognizer.decode_stream(stream)
+
+        raw = stream.result.text.strip()
+        if raw:
+            chunks.append(
+                {
+                    "index": len(chunks),
+                    "speaker": speaker,
+                    "start_ms": start_ms,
+                    "end_ms": end_ms,
+                    "raw_text": raw,
+                }
+            )
+    return chunks
+
+
 def transcribe(
     audio: np.ndarray,
     *,
@@ -158,7 +235,17 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("audio", type=Path, help="녹음 파일 (m4a, wav, mp3 등)")
     parser.add_argument("--model", type=Path, required=True, help="SenseVoice model.onnx")
     parser.add_argument("--tokens", type=Path, required=True, help="SenseVoice tokens.txt")
-    parser.add_argument("--vad", type=Path, required=True, help="silero_vad.onnx")
+    parser.add_argument("--vad", type=Path, help="silero_vad.onnx (화자분리를 안 쓸 때)")
+    parser.add_argument(
+        "--segmentation", type=Path, help="화자분리 모델. 주면 VAD 대신 화자별로 끊는다."
+    )
+    parser.add_argument("--embedding", type=Path, help="화자 임베딩 모델")
+    parser.add_argument(
+        "--speakers",
+        type=int,
+        default=-1,
+        help="화자 수를 알면 지정한다. 진료는 보통 2명(의사·환자) 또는 3명(매니저 포함).",
+    )
     parser.add_argument("--out", type=Path, default=Path("chunks.json"))
     parser.add_argument("--threads", type=int, default=4)
     parser.add_argument(
@@ -175,18 +262,38 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    audio = load_audio(args.audio)
-    print(f"오디오 {len(audio) / SAMPLE_RATE:.1f}초를 읽었습니다. 전사를 시작합니다.")
+    if not args.segmentation and not args.vad:
+        parser.error("--segmentation(+--embedding) 또는 --vad 중 하나는 있어야 합니다.")
+    if args.segmentation and not args.embedding:
+        parser.error("--segmentation을 쓰려면 --embedding도 필요합니다.")
 
-    chunks = transcribe(
-        audio,
-        model=args.model,
-        tokens=args.tokens,
-        vad_model=args.vad,
-        num_threads=args.threads,
-        min_silence_duration=args.min_silence,
-        max_speech_duration=args.max_speech,
-    )
+    audio = load_audio(args.audio)
+    print(f"오디오 {len(audio) / SAMPLE_RATE:.1f}초를 읽었습니다.")
+
+    if args.segmentation:
+        print("화자를 나누는 중입니다...")
+        turns = diarize(
+            audio,
+            segmentation_model=args.segmentation,
+            embedding_model=args.embedding,
+            num_speakers=args.speakers,
+        )
+        speakers = sorted({speaker for speaker, _, _ in turns})
+        print(f"화자 {len(speakers)}명, 발언 {len(turns)}구간을 찾았습니다. 전사를 시작합니다.")
+        chunks = transcribe_turns(
+            audio, turns, model=args.model, tokens=args.tokens, num_threads=args.threads
+        )
+    else:
+        print("전사를 시작합니다.")
+        chunks = transcribe(
+            audio,
+            model=args.model,
+            tokens=args.tokens,
+            vad_model=args.vad,
+            num_threads=args.threads,
+            min_silence_duration=args.min_silence,
+            max_speech_duration=args.max_speech,
+        )
 
     args.out.write_text(json.dumps(chunks, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"발화 {len(chunks)}구간을 {args.out}에 저장했습니다.")

@@ -82,3 +82,15 @@ def test_analyzes_a_transcript_that_has_no_speaker_labels():
     roles = {s.role for s in result.speakers}
     assert Role.DOCTOR in roles
     assert Role.PATIENT in roles
+
+
+def test_speaker_label_is_kept_when_diarization_ran():
+    """화자분리를 앞에 붙이면 구간마다 화자가 실려 온다."""
+    chunks = [
+        {"speaker": "speaker_00", "start_ms": 0, "end_ms": 5000, "raw_text": "<|ko|>간 수치가 높으시네요."},
+        {"speaker": "speaker_01", "start_ms": 5000, "end_ms": 7000, "raw_text": "<|ko|>알겠습니다."},
+    ]
+
+    utterances, _ = parse_chunks(chunks)
+
+    assert [u.speaker_tag for u in utterances] == ["speaker_00", "speaker_01"]
