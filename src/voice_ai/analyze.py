@@ -12,7 +12,7 @@ import sys
 from dataclasses import asdict
 from pathlib import Path
 
-from . import clovanote, sensevoice
+from . import clovanote, sensevoice, terminology
 from .clova import group_by_speaker
 from .models import AnalysisResult, Method, Role, SpeakerRole, Utterance
 from .qa import pair_qa
@@ -20,15 +20,7 @@ from .report import build_report_draft
 from .roles import classify, sentence_role, split_sentences
 from .terms import find_corrections
 
-# 앵커 녹음에서 실제로 쓰인 말들. 진료과별로 넓혀야 한다.
-# 약품과 질환·검사를 나눠 둔다. 섞으면 리포트의 약품란에 병명이 들어간다.
-DRUG_TERMS = frozenset({"간보호제", "항생제", "혈압약", "소염제", "진통제"})
 
-CONDITION_TERMS = frozenset({"고지혈증", "지방간", "내장지방", "빈혈", "염증"})
-
-TEST_TERMS = frozenset({"콜레스테롤", "소변검사", "피검사", "간수치", "혈당", "신장"})
-
-STARTER_TERMS = DRUG_TERMS | CONDITION_TERMS | TEST_TERMS
 
 
 def _split_into_sentences(utterances: list[Utterance]) -> list[Utterance]:
@@ -48,7 +40,7 @@ def _split_into_sentences(utterances: list[Utterance]) -> list[Utterance]:
 
 
 def analyze_without_speakers(
-    utterances: list[Utterance], *, medical_terms: frozenset[str]
+    utterances: list[Utterance], *, terms: terminology.Terminology
 ) -> AnalysisResult:
     """화자 라벨이 없는 전사. 문장별로 역할을 가른다."""
     sentences = _split_into_sentences(utterances)
@@ -56,7 +48,7 @@ def analyze_without_speakers(
     confidence_by_role: dict[Role, list[float]] = {}
 
     for sentence in sentences:
-        role, confidence = sentence_role(sentence.text, medical_terms=medical_terms)
+        role, confidence = sentence_role(sentence.text, medical_terms=terms.all_terms)
         labelled.append(
             Utterance(
                 speaker_tag=role.value,
@@ -92,13 +84,13 @@ def analyze_without_speakers(
         speakers=speakers,
         qa_pairs=pairs,
         unasked_question_ids=unasked,
-        report_draft=build_report_draft(labelled, roles, drug_terms=DRUG_TERMS),
+        report_draft=build_report_draft(labelled, roles, drug_terms=terms.drugs),
         warnings=warnings,
     )
 
 
 def analyze_with_speakers(
-    utterances: list[Utterance], *, medical_terms: frozenset[str] = frozenset()
+    utterances: list[Utterance], *, terms: terminology.Terminology
 ) -> AnalysisResult:
     """화자 라벨이 있는 전사. 화자 단위로 역할을 가른다."""
     speakers, warnings = classify(group_by_speaker(utterances))
@@ -108,7 +100,7 @@ def analyze_with_speakers(
         speakers=speakers,
         qa_pairs=pairs,
         unasked_question_ids=unasked,
-        report_draft=build_report_draft(utterances, roles, drug_terms=DRUG_TERMS),
+        report_draft=build_report_draft(utterances, roles, drug_terms=terms.drugs),
         warnings=warnings,
     )
 
@@ -126,8 +118,13 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="진료 전사를 분석해 리포트 초안을 만든다.")
     parser.add_argument("transcript", type=Path, help="클로바노트 .txt 또는 SenseVoice .json")
     parser.add_argument("--json", action="store_true", help="사람이 읽는 표 대신 JSON으로 출력")
+    parser.add_argument(
+        "--department",
+        help=f"진료과 용어 사전. 있는 것: {', '.join(terminology.available())}",
+    )
     args = parser.parse_args(argv)
 
+    terms = terminology.load(args.department)
     utterances, warnings = load(args.transcript)
     if not utterances:
         print("전사 내용이 비어 있습니다.", file=sys.stderr)
@@ -135,13 +132,13 @@ def main(argv: list[str] | None = None) -> int:
 
     has_speakers = any(u.speaker_tag for u in utterances)
     result = (
-        analyze_with_speakers(utterances, medical_terms=STARTER_TERMS)
+        analyze_with_speakers(utterances, terms=terms)
         if has_speakers
-        else analyze_without_speakers(utterances, medical_terms=STARTER_TERMS)
+        else analyze_without_speakers(utterances, terms=terms)
     )
     result.warnings = warnings + result.warnings
 
-    corrections = find_corrections(utterances, set(STARTER_TERMS))
+    corrections = find_corrections(utterances, set(terms.all_terms))
 
     if args.json:
         print(json.dumps({

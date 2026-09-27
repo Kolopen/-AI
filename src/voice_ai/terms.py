@@ -101,6 +101,11 @@ def find_corrections(
         for candidate in _candidates(utterance.text):
             if candidate in dictionary:
                 continue
+            # 사전 용어의 일부라면 오인식이 아니라 제대로 들린 조각이다.
+            # "복부 내장지방"이 "복부 내장 지방"으로 띄어 써지면 "내장"이 홀로 남는데,
+            # 이걸 발음이 비슷한 "신장"으로 고치면 콩팥 이야기로 둔갑한다.
+            if any(candidate in term for term in dictionary):
+                continue
 
             best_term, best_score = None, 0.0
             for term in dictionary:

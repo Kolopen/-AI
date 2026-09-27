@@ -24,6 +24,10 @@ voice-analyze = "voice_ai.analyze:main"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+# 용어 사전은 .txt라 따로 지정하지 않으면 설치본에 빠진다.
+[tool.setuptools.package-data]
+voice_ai = ["data/terms/*.txt"]
+
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]

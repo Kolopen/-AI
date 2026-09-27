@@ -74,10 +74,11 @@ def test_roles_can_be_assigned_without_any_speaker_labels():
 
 def test_analyzes_a_transcript_that_has_no_speaker_labels():
     """SenseVoice 출력처럼 화자가 없는 전사도 끝까지 분석된다."""
-    from voice_ai.analyze import STARTER_TERMS, analyze_without_speakers
+    from voice_ai import terminology
+    from voice_ai.analyze import analyze_without_speakers
 
     utterances, _ = parse_chunks(CHUNKS)
-    result = analyze_without_speakers(utterances, medical_terms=STARTER_TERMS)
+    result = analyze_without_speakers(utterances, terms=terminology.load("내과"))
 
     roles = {s.role for s in result.speakers}
     assert Role.DOCTOR in roles

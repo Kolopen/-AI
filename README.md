@@ -76,6 +76,7 @@ Q&A 매칭이 추론이 아니라 대조가 되고, 매니저가 빠뜨린 질�
 | `src/voice_ai/roles.py` | 의사 우선 판정 + 나머지 역할 배정 + 신뢰도 |
 | `src/voice_ai/refine.py` | 의사 블록에 흡수된 타 화자 발화 표시 |
 | `src/voice_ai/terms.py` | 의료 용어 오인식 교정 (자모 유사도 + 문서 내 근거) |
+| `src/voice_ai/terminology.py` | 진료과별 용어 사전 (`data/terms/*.txt`) |
 | `src/voice_ai/transcribe.py` | 녹음 파일 → SenseVoice 전사 (CLI) |
 | `src/voice_ai/analyze.py` | 전사 하나를 끝까지 돌리는 진입점 (CLI) |
 | `src/voice_ai/sensevoice.py` | SenseVoice 출력 정규화 (태그 제거, 언어 불일치 경고) |
@@ -161,6 +162,33 @@ Apple Silicon이면 `--threads`를 성능 코어 수에 맞춰 올리면 빨라�
 voice-analyze 클로바노트내보내기.txt
 voice-analyze chunks.json --json
 ```
+
+`--department 내과`처럼 진료과를 주면 그 과 용어 사전을 함께 쓴다. 공통 사전은
+언제나 들어간다. 사전이 클수록 엉뚱한 교정이 늘어서 진료과로 나눠 뒀다.
+
+## 용어 사전
+
+`src/voice_ai/data/terms/*.txt`에 진료과별로 둔다. 파일을 하나 더 만들면 바로
+`--department`로 고를 수 있다.
+
+```
+[drug]
+간보호제
+
+[condition]
+지방간
+
+[test]
+간수치
+```
+
+약품과 질환·검사를 나누는 이유는 리포트 약품란에 병명이 들어가지 않게 하기
+위해서다. 처음에 한 덩어리로 뒀다가 약품란에 "고지혈증, 콜레스테롤, 피검사"가
+들어갔다.
+
+**발음이 비슷하면서 뜻이 전혀 다른 말은 둘 다 넣어야 한다.** 실제 녹음에서 신장(콩팥)이
+심장으로 전사된 적이 있는데, 한쪽만 사전에 있으면 교정이 오히려 뜻을 바꿔 버린다.
+
 
 ## 검증
 
