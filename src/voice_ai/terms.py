@@ -50,6 +50,12 @@ THRESHOLD_DICTIONARY = 0.80
 SHORT_CANDIDATE_LENGTH = 2
 THRESHOLD_SHORT = 0.95
 
+# 두 글자 의학 용어는 사전 근거만으로 고치지 않는다. 복통·두통·간염 같은 말은
+# 흔한 한국어와 우연히 닮는다. 실제로 "추석 잘 보내시고요"가 쪼개져 나온
+# "보고요"가 "복통"으로 바뀌었다(0.833). 인사말이 증상이 되어 리포트에 실린다.
+# 올바른 형태가 같은 전사문에 이미 나왔다면(IN_DOCUMENT) 근거가 다르므로 허용한다.
+SHORT_TERM_LENGTH = 2
+
 
 def to_jamo(text: str) -> str:
     """한글을 자모로 푼다. 발음이 비슷한 오인식을 거리로 재기 위한 것."""
@@ -130,6 +136,8 @@ def find_corrections(
                 continue
 
             in_document = best_term in present
+            if not in_document and len(best_term) <= SHORT_TERM_LENGTH:
+                continue
             threshold = THRESHOLD_IN_DOCUMENT if in_document else THRESHOLD_DICTIONARY
             if len(candidate) <= SHORT_CANDIDATE_LENGTH:
                 threshold = max(threshold, THRESHOLD_SHORT)

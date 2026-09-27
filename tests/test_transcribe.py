@@ -337,3 +337,39 @@ def test_sentencepiece_marker_is_stripped():
     )
 
     assert chunks[0]["raw_text"] == "2.0초"
+
+
+def test_non_korean_fragments_are_dropped():
+    """1초짜리 맞장구에서 다국어 모델이 일본어를 뱉는다.
+
+    실제 전사에 "ねね。", "や。", "う。" 가 화자 발언으로 들어갔다.
+    """
+    from voice_ai.transcribe import transcribe_turns
+
+    class _Fixed:
+        def __init__(self, text):
+            self.text = text
+
+        def create_stream(self):
+            outer = self
+
+            class Stream:
+                result = _Fixed.Result(outer.text)
+
+                def accept_waveform(self, rate, samples):
+                    pass
+
+            return Stream()
+
+        def decode_stream(self, stream):
+            pass
+
+        class Result:
+            def __init__(self, text):
+                self.text = text
+
+    audio = np.zeros(2 * SAMPLE_RATE, dtype=np.float32)
+    turn = [("speaker_00", 0, 2_000)]
+
+    assert transcribe_turns(audio, turn, recognizer=_Fixed("ねね。")) == []
+    assert transcribe_turns(audio, turn, recognizer=_Fixed("네네."))[0]["raw_text"] == "네네."

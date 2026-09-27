@@ -20,6 +20,7 @@ from .qa import pair_qa
 from .report import build_report_draft
 from .roles import classify, sentence_role, split_sentences
 from .crosscheck import cross_check
+from .turns import group_turns
 from .terms import apply_corrections, find_confusions, find_corrections
 
 
@@ -264,15 +265,15 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.full:
         roles = {s.speaker_tag: s.role.value for s in result.speakers}
-        print(f"\n전체 대화 ({len(utterances)}구간)")
-        previous = None
-        for utterance in utterances:
-            stamp = f"{utterance.start_ms // 60000:02d}:{utterance.start_ms // 1000 % 60:02d}"
-            role = roles.get(utterance.speaker_tag, "UNKNOWN")
-            # 같은 사람이 이어 말하면 이름을 반복하지 않는다. 대화가 읽히게.
-            who = "" if utterance.speaker_tag == previous else f"{role}"
-            previous = utterance.speaker_tag
-            print(f"  [{stamp}] {who:8} {apply_corrections(utterance.text, corrections)}")
+        turns = group_turns(utterances)
+        print(f"\n전체 대화 ({len(turns)}발언 / {len(utterances)}구간)")
+        for turn in turns:
+            stamp = f"{turn.start_ms // 60000:02d}:{turn.start_ms // 1000 % 60:02d}"
+            role = roles.get(turn.speaker_tag, "UNKNOWN")
+            print(f"\n  {role} {stamp}")
+            for line in turn.text.split("\n"):
+                print(f"    {apply_corrections(line, corrections)}")
+        print()
 
     print(f"\n질문과 답변 ({len(result.qa_pairs)}건)")
     for pair in result.qa_pairs:

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from pathlib import Path
 
 import numpy as np
@@ -40,12 +41,19 @@ def load_audio(path: Path, sample_rate: int = SAMPLE_RATE) -> np.ndarray:
 _WORD_BOUNDARY = "\u2581"
 
 
-def _clean(text: str) -> str:
-    """엔진이 남긴 토크나이저 기호를 지운다.
+_HANGUL = re.compile(r"[가-힣]")
 
-    붙여 두면 용어 사전이 "▁콜레스테롤"을 못 찾고, 리포트에도 그대로 실린다.
+
+def _clean(text: str) -> str:
+    """토크나이저 기호를 지우고, 한국어가 아닌 조각은 버린다.
+
+    기호를 붙여 두면 용어 사전이 "▁콜레스테롤"을 못 찾고 리포트에도 그대로 실린다.
+
+    1초 남짓한 맞장구에서는 다국어 모델이 언어를 헷갈려 "ねね。", "や。", "う。"
+    같은 일본어를 뱉는다. 한국어 진료 녹음이므로 한글이 하나도 없으면 버린다.
     """
-    return text.replace(_WORD_BOUNDARY, " ").strip()
+    cleaned = text.replace(_WORD_BOUNDARY, " ").strip()
+    return cleaned if _HANGUL.search(cleaned) else ""
 
 
 def _quietest_point(samples: np.ndarray, target: int, search: int) -> int:

@@ -114,3 +114,33 @@ def test_text_without_corrections_is_untouched():
     from voice_ai.terms import apply_corrections
 
     assert apply_corrections("간수치가 정상입니다", []) == "간수치가 정상입니다"
+
+
+def test_a_greeting_is_not_turned_into_a_symptom():
+    """"추석 잘 보내시고요"가 쪼개져 나온 "보고요"가 "복통"이 됐다(0.833).
+
+    두 글자 증상명은 흔한 한국어와 우연히 닮는다. 사전에만 있는 근거로는
+    고치지 않는다. 인사말이 증상이 되어 리포트에 실리면 진료 기록이 틀린다.
+    """
+    from voice_ai import terminology
+    from voice_ai.models import Utterance
+    from voice_ai.terms import find_corrections
+
+    terms = set(terminology.load("내과").all_terms)
+    transcript = [Utterance("P", 0, 5_000, "감사합니다 잘 보고요 되 겠습니다")]
+
+    assert find_corrections(transcript, terms) == []
+
+
+def test_longer_terms_are_still_corrected_from_the_dictionary_alone():
+    """짧은 것만 막는다. 긴 용어는 우연히 닮기 어려우므로 그대로 고친다."""
+    from voice_ai import terminology
+    from voice_ai.models import Utterance
+    from voice_ai.terms import find_corrections
+
+    terms = set(terminology.load("내과").all_terms)
+    transcript = [Utterance("D", 0, 5_000, "폴레스테롤이 216입니다")]
+
+    corrections = find_corrections(transcript, terms)
+
+    assert [(c.original, c.corrected) for c in corrections] == [("폴레스테롤이", "콜레스테롤")]
