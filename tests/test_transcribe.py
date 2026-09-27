@@ -276,3 +276,64 @@ def test_missing_model_file_is_named(tmp_path):
             decoder=tmp_path / "decoder_model_merged.ort",
             tokens=tokens,
         )
+
+
+class _EchoRecognizer:
+    """받은 오디오 길이를 초 단위로 돌려주는 가짜 인식기."""
+
+    def __init__(self, prefix: str = ""):
+        self.prefix = prefix
+        self.lengths: list[int] = []
+
+    def create_stream(self):
+        recognizer = self
+
+        class Stream:
+            def accept_waveform(self, rate, samples):
+                recognizer.lengths.append(len(samples))
+                seconds = len(samples) / rate
+                self.result = type("R", (), {"text": f"{recognizer.prefix}{seconds:.1f}초"})()
+
+            def __init__(self):
+                self.result = type("R", (), {"text": ""})()
+
+        self._stream = Stream()
+        return self._stream
+
+    def decode_stream(self, stream):
+        pass
+
+
+def test_long_turns_are_split_before_recognition():
+    """moonshine 은 12초 구간에서 예외를 내고 빈 결과를 돌려줬다."""
+    from voice_ai.transcribe import transcribe_turns
+
+    audio = np.zeros(30 * SAMPLE_RATE, dtype=np.float32)
+    recognizer = _EchoRecognizer()
+
+    chunks = transcribe_turns(
+        audio, [("speaker_00", 0, 30_000)], recognizer=recognizer, max_chunk_duration=10.0
+    )
+
+    assert len(chunks) > 1
+    assert max(recognizer.lengths) <= 10 * SAMPLE_RATE
+    # 쪼갠 조각의 타임스탬프가 원래 구간 안에서 이어져야 한다.
+    assert chunks[0]["start_ms"] == 0
+    assert chunks[1]["start_ms"] >= chunks[0]["end_ms"] - 1
+    assert chunks[-1]["end_ms"] <= 30_000
+
+
+def test_sentencepiece_marker_is_stripped():
+    """moonshine 출력에 "▁피검사에서는" 처럼 어절 경계 기호가 남는다.
+
+    붙어 있으면 용어 사전이 그 어절을 못 찾는다.
+    """
+    from voice_ai.transcribe import transcribe_turns
+
+    audio = np.zeros(2 * SAMPLE_RATE, dtype=np.float32)
+
+    chunks = transcribe_turns(
+        audio, [("speaker_00", 0, 2_000)], recognizer=_EchoRecognizer(prefix="▁")
+    )
+
+    assert chunks[0]["raw_text"] == "2.0초"

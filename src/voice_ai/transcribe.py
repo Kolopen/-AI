@@ -36,6 +36,18 @@ def load_audio(path: Path, sample_rate: int = SAMPLE_RATE) -> np.ndarray:
     return np.concatenate(blocks).astype(np.float32) / 32768.0
 
 
+# SentencePiece 어절 경계 기호. moonshine 출력에 "▁피검사에서는" 처럼 남는다.
+_WORD_BOUNDARY = "\u2581"
+
+
+def _clean(text: str) -> str:
+    """엔진이 남긴 토크나이저 기호를 지운다.
+
+    붙여 두면 용어 사전이 "▁콜레스테롤"을 못 찾고, 리포트에도 그대로 실린다.
+    """
+    return text.replace(_WORD_BOUNDARY, " ").strip()
+
+
 def _quietest_point(samples: np.ndarray, target: int, search: int) -> int:
     """target 부근에서 가장 조용한 지점을 찾는다.
 
@@ -198,27 +210,41 @@ def transcribe_turns(
     turns: list[tuple[str, int, int]],
     *,
     recognizer,
+    max_chunk_duration: float = 10.0,
 ) -> list[dict]:
-    """화자분리가 잡아준 구간마다 전사한다. 구간이 곧 한 사람의 발언이다."""
+    """화자분리가 잡아준 구간마다 전사한다. 구간이 곧 한 사람의 발언이다.
 
+    한 사람이 길게 말하면 구간도 그만큼 길어진다. moonshine 은 12초짜리 구간에서
+    onnxruntime 예외를 내고 빈 결과를 돌려줬고, SenseVoice 는 죽지는 않지만 긴
+    구간일수록 "신장"을 "심장"으로 쓰는 식으로 정확도가 떨어졌다. 상한을 두고
+    조용한 지점에서 끊는다.
+    """
     chunks: list[dict] = []
+    max_samples = int(max_chunk_duration * SAMPLE_RATE)
+
     for speaker, start_ms, end_ms in turns:
         piece = audio[int(start_ms * SAMPLE_RATE / 1000) : int(end_ms * SAMPLE_RATE / 1000)]
         if len(piece) < SAMPLE_RATE // 10:  # 0.1초 미만은 버린다
             continue
 
-        stream = recognizer.create_stream()
-        stream.accept_waveform(SAMPLE_RATE, piece)
-        recognizer.decode_stream(stream)
+        for offset, part in _split_long(piece, max_samples):
+            if len(part) < SAMPLE_RATE // 10:
+                continue
+            stream = recognizer.create_stream()
+            stream.accept_waveform(SAMPLE_RATE, part)
+            recognizer.decode_stream(stream)
 
-        raw = stream.result.text.strip()
-        if raw:
+            raw = _clean(stream.result.text)
+            if not raw:
+                continue
+
+            part_start = start_ms + round(offset * 1000 / SAMPLE_RATE)
             chunks.append(
                 {
                     "index": len(chunks),
                     "speaker": speaker,
-                    "start_ms": start_ms,
-                    "end_ms": end_ms,
+                    "start_ms": part_start,
+                    "end_ms": part_start + round(len(part) * 1000 / SAMPLE_RATE),
                     "raw_text": raw,
                 }
             )
@@ -266,7 +292,7 @@ def transcribe(
                 stream.accept_waveform(SAMPLE_RATE, piece)
                 recognizer.decode_stream(stream)
 
-                raw = stream.result.text.strip()
+                raw = _clean(stream.result.text)
                 if not raw:
                     continue
 
@@ -326,6 +352,12 @@ def main(argv: list[str] | None = None) -> int:
         help="전사 언어. auto로 두면 한국어를 중국어로 잘못 잡는 일이 있다.",
     )
     parser.add_argument(
+        "--max-chunk",
+        type=float,
+        default=10.0,
+        help="화자분리 구간이 이보다 길면 조용한 지점에서 끊는다(초).",
+    )
+    parser.add_argument(
         "--max-speech",
         type=float,
         default=10.0,
@@ -373,7 +405,9 @@ def main(argv: list[str] | None = None) -> int:
         )
         speakers = sorted({speaker for speaker, _, _ in turns})
         print(f"화자 {len(speakers)}명, 발언 {len(turns)}구간을 찾았습니다. 전사를 시작합니다.")
-        chunks = transcribe_turns(audio, turns, recognizer=recognizer)
+        chunks = transcribe_turns(
+            audio, turns, recognizer=recognizer, max_chunk_duration=args.max_chunk
+        )
     else:
         print("전사를 시작합니다.")
         chunks = transcribe(
