@@ -36,6 +36,46 @@ def load_audio(path: Path, sample_rate: int = SAMPLE_RATE) -> np.ndarray:
     return np.concatenate(blocks).astype(np.float32) / 32768.0
 
 
+def _quietest_point(samples: np.ndarray, target: int, search: int) -> int:
+    """target 부근에서 가장 조용한 지점을 찾는다.
+
+    단어 한가운데를 자르면 양쪽 조각의 전사가 모두 망가진다. 숨을 고르는 순간을
+    골라 끊으면 손실이 훨씬 적다.
+    """
+    window = 400  # 25ms
+    low = max(window, target - search)
+    high = min(len(samples) - window, target + search)
+    if high <= low:
+        return min(target, len(samples))
+
+    candidates = range(low, high, 160)  # 10ms 간격
+    loudness = np.abs(samples)
+    return min(candidates, key=lambda c: float(loudness[c - window : c + window].mean()))
+
+
+def _split_long(samples: np.ndarray, max_samples: int) -> list[tuple[int, np.ndarray]]:
+    """길이 상한을 넘는 구간을 조용한 지점에서 끊어 (시작오프셋, 조각) 으로 돌려준다.
+
+    VAD의 max_speech_duration만 믿을 수 없다. 마지막 flush는 남은 버퍼를 길이와
+    무관하게 한 구간으로 뱉기 때문에 실제 녹음에서 58초짜리 덩어리가 나왔다.
+    """
+    if len(samples) <= max_samples:
+        return [(0, samples)]
+
+    search = SAMPLE_RATE  # 자를 지점을 앞뒤 1초 안에서 고른다
+    pieces: list[tuple[int, np.ndarray]] = []
+    offset = 0
+    while len(samples) - offset > max_samples:
+        cut = _quietest_point(samples, offset + max_samples, search)
+        if cut <= offset:
+            cut = offset + max_samples
+        pieces.append((offset, samples[offset:cut]))
+        offset = cut
+
+    pieces.append((offset, samples[offset:]))
+    return pieces
+
+
 def transcribe(
     audio: np.ndarray,
     *,
@@ -72,24 +112,30 @@ def transcribe(
 
     chunks: list[dict] = []
 
+    max_samples = int(max_speech_duration * SAMPLE_RATE)
+
     def drain() -> None:
         while not vad.empty():
             segment = vad.front
-            start_ms = round(segment.start * 1000 / SAMPLE_RATE)
-            end_ms = start_ms + round(len(segment.samples) * 1000 / SAMPLE_RATE)
-
-            stream = recognizer.create_stream()
-            stream.accept_waveform(SAMPLE_RATE, segment.samples)
+            samples = np.asarray(segment.samples, dtype=np.float32)
+            base_ms = round(segment.start * 1000 / SAMPLE_RATE)
             vad.pop()
-            recognizer.decode_stream(stream)
 
-            raw = stream.result.text.strip()
-            if raw:
+            for offset, piece in _split_long(samples, max_samples):
+                stream = recognizer.create_stream()
+                stream.accept_waveform(SAMPLE_RATE, piece)
+                recognizer.decode_stream(stream)
+
+                raw = stream.result.text.strip()
+                if not raw:
+                    continue
+
+                start_ms = base_ms + round(offset * 1000 / SAMPLE_RATE)
                 chunks.append(
                     {
                         "index": len(chunks),
                         "start_ms": start_ms,
-                        "end_ms": end_ms,
+                        "end_ms": start_ms + round(len(piece) * 1000 / SAMPLE_RATE),
                         "raw_text": raw,
                     }
                 )

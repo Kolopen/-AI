@@ -61,3 +61,50 @@ def test_downmixes_stereo_to_mono(tmp_path):
 
     assert audio.ndim == 1
     assert len(audio) == pytest.approx(SAMPLE_RATE, rel=0.02)
+
+
+def quiet_at(seconds, total=12.0, gap_ms=200):
+    """조용한 구간을 심은 잡음 신호."""
+    signal = (np.random.rand(int(total * SAMPLE_RATE)).astype(np.float32) - 0.5) * 0.5
+    for second in seconds:
+        start = int(second * SAMPLE_RATE)
+        signal[start : start + int(gap_ms / 1000 * SAMPLE_RATE)] = 0.0
+    return signal
+
+
+def test_short_segment_is_left_alone():
+    from voice_ai.transcribe import _split_long
+
+    signal = quiet_at([], total=3.0)
+
+    assert len(_split_long(signal, 5 * SAMPLE_RATE)) == 1
+
+
+def test_long_segment_is_split_under_the_limit():
+    """VAD의 max_speech_duration만 믿을 수 없다. flush가 긴 덩어리를 뱉는다."""
+    from voice_ai.transcribe import _split_long
+
+    pieces = _split_long(quiet_at([4, 8]), 5 * SAMPLE_RATE)
+
+    assert len(pieces) == 3
+    assert all(len(piece) <= 5 * SAMPLE_RATE for _, piece in pieces)
+
+
+def test_split_lands_on_a_quiet_point():
+    """단어 한가운데를 자르면 양쪽 조각의 전사가 모두 망가진다."""
+    from voice_ai.transcribe import _split_long
+
+    pieces = _split_long(quiet_at([4, 8]), 5 * SAMPLE_RATE)
+    offsets = [offset / SAMPLE_RATE for offset, _ in pieces]
+
+    assert offsets[1] == pytest.approx(4.0, abs=0.1)
+    assert offsets[2] == pytest.approx(8.0, abs=0.1)
+
+
+def test_pieces_cover_the_whole_segment():
+    from voice_ai.transcribe import _split_long
+
+    signal = quiet_at([4, 8])
+    pieces = _split_long(signal, 5 * SAMPLE_RATE)
+
+    assert sum(len(piece) for _, piece in pieces) == len(signal)
