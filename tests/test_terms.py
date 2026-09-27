@@ -77,3 +77,40 @@ def test_dictionary_only_evidence_stays_strict():
     corrections = find_corrections(transcript, DICTIONARY)
 
     assert not any(c.original == "감보제" for c in corrections)
+
+
+def test_corrections_keep_the_original_in_view():
+    """고친 글과 실제로 들린 것을 한 화면에서 봐야 한다.
+
+    원문을 지우면 매니저가 녹음을 다시 듣기 전에는 판단할 근거가 없다.
+    """
+    from voice_ai.terms import TermCorrection, apply_corrections
+
+    corrections = [
+        TermCorrection("반수치가", "간수치", 0.75, "IN_DOCUMENT", 0),
+        TermCorrection("감보제", "간보호제", 0.75, "IN_DOCUMENT", 0),
+    ]
+
+    applied = apply_corrections("반수치가 좋아지려면 감보제 드시면 됩니다", corrections)
+
+    assert applied == "간수치(←반수치가) 좋아지려면 간보호제(←감보제) 드시면 됩니다"
+
+
+def test_longer_originals_are_replaced_first():
+    """짧은 것부터 바꾸면 긴 것 안쪽을 먼저 건드려 글자가 깨진다."""
+    from voice_ai.terms import TermCorrection, apply_corrections
+
+    corrections = [
+        TermCorrection("간수", "간수치", 0.8, "DICTIONARY", 0),
+        TermCorrection("간수치가", "간수치", 0.9, "IN_DOCUMENT", 0),
+    ]
+
+    applied = apply_corrections("간수치가 높아요", corrections)
+
+    assert applied == "간수치(←간수치가) 높아요"
+
+
+def test_text_without_corrections_is_untouched():
+    from voice_ai.terms import apply_corrections
+
+    assert apply_corrections("간수치가 정상입니다", []) == "간수치가 정상입니다"

@@ -20,7 +20,7 @@ from .qa import pair_qa
 from .report import build_report_draft
 from .roles import classify, sentence_role, split_sentences
 from .crosscheck import cross_check
-from .terms import find_confusions, find_corrections
+from .terms import apply_corrections, find_confusions, find_corrections
 
 
 
@@ -206,6 +206,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("transcript", type=Path, help="클로바노트 .txt 또는 SenseVoice .json")
     parser.add_argument("--json", action="store_true", help="사람이 읽는 표 대신 JSON으로 출력")
     parser.add_argument(
+        "--full",
+        action="store_true",
+        help="발췌 대신 전체 대화를 화자와 함께 보여준다. 교정은 원문을 남긴 채 반영한다.",
+    )
+    parser.add_argument(
         "--compare",
         type=Path,
         help="다른 엔진으로 만든 전사. 숫자와 용어가 엇갈리는 자리를 표시한다.",
@@ -257,6 +262,18 @@ def main(argv: list[str] | None = None) -> int:
         flag = "  [검수 필요]" if speaker.needs_review else ""
         print(f"  {speaker.speaker_tag:12} {speaker.role.value:8} 신뢰도 {speaker.confidence}{flag}")
 
+    if args.full:
+        roles = {s.speaker_tag: s.role.value for s in result.speakers}
+        print(f"\n전체 대화 ({len(utterances)}구간)")
+        previous = None
+        for utterance in utterances:
+            stamp = f"{utterance.start_ms // 60000:02d}:{utterance.start_ms // 1000 % 60:02d}"
+            role = roles.get(utterance.speaker_tag, "UNKNOWN")
+            # 같은 사람이 이어 말하면 이름을 반복하지 않는다. 대화가 읽히게.
+            who = "" if utterance.speaker_tag == previous else f"{role}"
+            previous = utterance.speaker_tag
+            print(f"  [{stamp}] {who:8} {apply_corrections(utterance.text, corrections)}")
+
     print(f"\n질문과 답변 ({len(result.qa_pairs)}건)")
     for pair in result.qa_pairs:
         print(f"  [{pair.question_at_ms // 1000}초] ({pair.asked_by.value}) {pair.question}")
@@ -276,7 +293,7 @@ def main(argv: list[str] | None = None) -> int:
         for label, body in filled:
             print(f"  [{label}]")
             for line in body.splitlines():
-                print(f"    {line}")
+                print(f"    {apply_corrections(line, corrections)}")
         print("  [요약] 매니저가 작성합니다.")
 
     if corrections:

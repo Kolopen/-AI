@@ -212,3 +212,37 @@ def find_confusions(
                 found.append(Confusion(written, other, cue, utterance.start_ms))
 
     return found
+
+
+def apply_corrections(text: str, corrections: list[TermCorrection]) -> str:
+    """교정을 본문에 넣되 원문을 괄호로 남긴다.
+
+    읽기 좋게 고친 글과, 실제로 무엇이 들렸는지를 한 화면에서 볼 수 있어야 한다.
+    원문을 지우면 매니저가 녹음을 다시 듣기 전에는 판단할 근거가 없어진다.
+
+    한 번에 훑고 한 번에 만든다. 하나씩 치환하면 앞서 끼워 넣은 표시 안쪽을
+    다음 교정이 또 건드려 "간수치(←간수)치(←..." 처럼 글자가 뭉개진다.
+    """
+    spans: list[tuple[int, int, str]] = []
+    for correction in corrections:
+        marked = f"{correction.corrected}(←{correction.original})"
+        start = text.find(correction.original)
+        while start != -1:
+            spans.append((start, start + len(correction.original), marked))
+            start = text.find(correction.original, start + 1)
+
+    # 겹치면 긴 쪽을 남긴다. "간수치가"를 놔두고 "간수"를 버려야 말이 된다.
+    spans.sort(key=lambda s: (s[0], -(s[1] - s[0])))
+    chosen: list[tuple[int, int, str]] = []
+    for span in spans:
+        if chosen and span[0] < chosen[-1][1]:
+            continue
+        chosen.append(span)
+
+    out, cursor = [], 0
+    for start, end, marked in chosen:
+        out.append(text[cursor:start])
+        out.append(marked)
+        cursor = end
+    out.append(text[cursor:])
+    return "".join(out)
