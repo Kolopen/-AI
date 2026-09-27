@@ -21,6 +21,7 @@ from .report import build_report_draft
 from .roles import classify, sentence_role, split_sentences
 from .crosscheck import cross_check
 from .facts import extract as extract_facts
+from .operations import summarize
 from .turns import group_turns
 from .terms import apply_corrections, find_confusions, find_corrections
 
@@ -249,13 +250,20 @@ def main(argv: list[str] | None = None) -> int:
 
     corrections = find_corrections(utterances, set(terms.all_terms))
 
+    roles_by_tag = {sp.speaker_tag: sp.role for sp in result.speakers}
+    facts = extract_facts(utterances, roles_by_tag, terms, corrections)
+
     if args.json:
+        # 매니저가 보는 것과 관리자가 보는 것을 나눠 담는다. 경고는 진료실에서
+        # 할 수 있는 일이 없으므로 매니저 쪽에 넣지 않는다.
+        operations = summarize(result.warnings, term_corrections=len(corrections))
         print(json.dumps({
             "speakers": [asdict(s) for s in result.speakers],
             "qa_pairs": [asdict(p) for p in result.qa_pairs],
+            "facts": asdict(facts),
             "report_draft": asdict(result.report_draft),
             "term_corrections": [asdict(c) for c in corrections],
-            "warnings": result.warnings,
+            "operations": asdict(operations),
         }, ensure_ascii=False, indent=2, default=str))
         return 0
 
@@ -281,8 +289,6 @@ def main(argv: list[str] | None = None) -> int:
         print(f"  [{pair.question_at_ms // 1000}초] ({pair.asked_by.value}) {pair.question}")
         print(f"        -> {pair.answer[:80]}")
 
-    roles_by_tag = {sp.speaker_tag: sp.role for sp in result.speakers}
-    facts = extract_facts(utterances, roles_by_tag, terms, corrections)
     if any([facts.measurements, facts.diagnoses, facts.normal, facts.drugs,
             facts.schedule, facts.duration, facts.lifestyle]):
         print("\n핵심 내용")
@@ -334,7 +340,9 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  {c.original!r} -> {c.corrected!r}  유사도 {c.similarity}  근거 {c.evidence}")
 
     if result.warnings:
-        print("\n경고")
+        operations = summarize(result.warnings, term_corrections=len(corrections))
+        print("\n운영 점검 (관리자용 · 매니저 화면에는 내보내지 않는다)")
+        print("  " + "  ".join(f"{k} {v}" for k, v in sorted(operations.counts.items())))
         for warning in result.warnings:
             print(f"  - {warning}")
 
