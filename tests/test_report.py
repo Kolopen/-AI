@@ -68,3 +68,33 @@ def test_patient_speech_is_never_quoted():
 def test_summary_is_left_for_a_person():
     """자연어 생성이 필요한 유일한 항목이라 비워 둔다."""
     assert draft().summary == ""
+
+
+# SenseVoice 한국어 출력에는 마침표가 거의 붙지 않는다. 실제 전사에서 가져온 모양이다.
+UNPUNCTUATED = (
+    "그때도 약을 두 달 드셨었잖아요 근데 두 달만 딱 드시니까 "
+    "아직 완전히 좋아지진 않았고 지방간이 회복되는 게 중요할 것 같고요 "
+    "그거를 매일 하루에 하나씩 드시면 되니까 빨리 내려갈 것 같긴 해요"
+)
+
+
+def test_clauses_are_split_without_punctuation():
+    """마침표가 없으면 구간 하나가 통째로 한 문장이 되어 리포트를 못 쓰게 만든다."""
+    from voice_ai.roles import split_sentences
+
+    clauses = split_sentences(UNPUNCTUATED)
+
+    assert len(clauses) > 1
+    assert any("매일 하루에 하나씩" in c for c in clauses)
+    # 한 절이 문단 전체를 품으면 안 된다.
+    assert all(len(c) < 70 for c in clauses)
+
+
+def test_report_fields_stay_short_without_punctuation():
+    unpunctuated = [Utterance("D", 0, 30_000, UNPUNCTUATED)]
+
+    result = build_report_draft(unpunctuated, ROLES, drug_terms=DRUG_TERMS)
+
+    assert "매일 하루에 하나씩" in result.medication_schedule_note
+    # 복용 방법란에 진료 설명이 통째로 딸려 오면 안 된다.
+    assert "지방간이 회복되는" not in result.medication_schedule_note

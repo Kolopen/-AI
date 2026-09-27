@@ -83,9 +83,49 @@ QUESTION_PATTERN = re.compile(r"\?|까요|나요|가요|습니까|ㅂ니까|인�
 
 _SENTENCE_BOUNDARY = re.compile(r"(?<=[.!?])\s+")
 
+# 한국어 종결·연결 어미. 전사에 마침표가 없을 때 절을 가르는 기준이 된다.
+_CLAUSE_ENDING = re.compile(
+    r"(습니다|ㅂ니다|거든요|잖아요|는데요|겠네요|같아요|있어요|"
+    r"니까|는데|세요|어요|아요|해요|고요|죠)\s+"
+)
+
+# 이보다 긴 조각만 절로 다시 가른다. 문장 부호가 제대로 붙은 전사는 건드리지 않는다.
+_LONG_ENOUGH_TO_SPLIT = 60
+
 
 def split_sentences(text: str) -> list[str]:
-    return [s.strip() for s in _SENTENCE_BOUNDARY.split(text) if s.strip()]
+    """문장으로 가른다.
+
+    SenseVoice 한국어 출력에는 마침표가 거의 붙지 않아 구간 하나가 통째로 한 문장이
+    된다. 그대로 두면 리포트 항목마다 문단 전체가 들어가 쓸 수 없다. 마침표로 가른
+    뒤에도 여전히 긴 조각은 종결·연결 어미로 한 번 더 가른다.
+    """
+    pieces: list[str] = []
+    for piece in _SENTENCE_BOUNDARY.split(text):
+        piece = piece.strip()
+        if not piece:
+            continue
+        if len(piece) <= _LONG_ENOUGH_TO_SPLIT:
+            pieces.append(piece)
+            continue
+        pieces.extend(_split_clauses(piece))
+    return pieces
+
+
+def _split_clauses(text: str) -> list[str]:
+    """어미 뒤에서 자른다. 어미는 앞 절에 남기고 그 뒤 공백은 버린다."""
+    clauses: list[str] = []
+    cursor = 0
+    for match in _CLAUSE_ENDING.finditer(text):
+        clause = text[cursor : match.end(1)].strip()
+        if clause:
+            clauses.append(clause)
+        cursor = match.end()
+
+    tail = text[cursor:].strip()
+    if tail:
+        clauses.append(tail)
+    return clauses
 
 
 def _without_greetings(text: str) -> str:
