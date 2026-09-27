@@ -67,3 +67,67 @@ def test_detects_unasked_pre_registered_question():
     matched = {p.pre_registered_question_id for p in pairs}
     assert "q_bp" in matched
     assert unasked == ["q_diet"]
+
+
+def _over_segmented():
+    """화자분리가 짧은 맞장구를 화자마다 흩어 놓은 실제 상황.
+
+    의사만 길게 말하고 비의사는 한두 마디씩 여러 태그로 쪼개진다. 실제 녹음에서
+    비의사 화자 넷이 각각 8~21자로 나왔다.
+    """
+    from voice_ai.models import Utterance
+
+    return [
+        Utterance("speaker_00", 0, 9_000, "피검사에서는 신장이라든지 빈혈은 괜찮으시고요."),
+        Utterance("speaker_01", 9_000, 10_500, "네."),
+        Utterance("speaker_00", 10_500, 20_000, "간수치가 정상보다 조금 높으신 상태예요."),
+        Utterance("speaker_04", 20_000, 22_000, "그럼 언제까지 하나요?"),
+        Utterance("speaker_00", 22_000, 32_000, "두 달 뒤에 다시 보시면 됩니다."),
+        Utterance("speaker_07", 32_000, 33_000, "예."),
+    ]
+
+
+def _analyze(merge_non_doctor=False):
+    from voice_ai import terminology
+    from voice_ai.analyze import analyze_with_speakers
+
+    return analyze_with_speakers(
+        _over_segmented(),
+        terms=terminology.load("내과"),
+        merge_non_doctor=merge_non_doctor,
+    )
+
+
+def test_split_speakers_are_flagged_not_guessed():
+    """쪼개진 조각은 UNKNOWN으로 남기고 합치라고 알려준다.
+
+    조각마다 억지로 역할을 붙이면 틀린 화자에게 발언이 귀속된다.
+    """
+    result = _analyze()
+
+    assert [s.role for s in result.speakers].count(Role.UNKNOWN) == 3
+    assert any("--merge-non-doctor" in w for w in result.warnings)
+
+
+def test_merging_keeps_the_doctor_apart():
+    """합치는 것은 비의사끼리만이다. 의사 판정이 흔들리면 안 된다."""
+    result = _analyze(merge_non_doctor=True)
+
+    doctors = [s for s in result.speakers if s.role is Role.DOCTOR]
+    assert [s.speaker_tag for s in doctors] == ["speaker_00"]
+    assert all(s.role is Role.PATIENT for s in result.speakers if s.speaker_tag != "speaker_00")
+    assert result.speakers[1].merged_from == ["speaker_04", "speaker_07"]
+
+
+def test_merging_recovers_a_question_that_was_lost():
+    """짧고 어휘 신호가 없는 질문은 화자가 UNKNOWN이면 통째로 버려진다.
+
+    질문자를 특정하지 못하면 Q&A 페어링이 아예 시작되지 않기 때문이다.
+    """
+    assert _analyze().qa_pairs == []
+
+    pairs = _analyze(merge_non_doctor=True).qa_pairs
+
+    assert len(pairs) == 1
+    assert pairs[0].question == "그럼 언제까지 하나요?"
+    assert "두 달" in pairs[0].answer

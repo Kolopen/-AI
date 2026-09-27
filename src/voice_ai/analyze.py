@@ -89,12 +89,30 @@ def analyze_without_speakers(
     )
 
 
+# 이보다 많은 비의사 화자가 판정 불가로 남으면 화자분리가 한 사람을 쪼갠 쪽을 의심한다.
+_SPLIT_SUSPICION = 2
+
+
 def analyze_with_speakers(
-    utterances: list[Utterance], *, terms: terminology.Terminology
+    utterances: list[Utterance],
+    *,
+    terms: terminology.Terminology,
+    merge_non_doctor: bool = False,
 ) -> AnalysisResult:
     """화자 라벨이 있는 전사. 화자 단위로 역할을 가른다."""
-    speakers, warnings = classify(group_by_speaker(utterances))
+    speakers, warnings = classify(
+        group_by_speaker(utterances), merge_non_doctor=merge_non_doctor
+    )
     roles = {s.speaker_tag: s.role for s in speakers}
+
+    # 판정 불가가 쌓이면 Q&A가 통째로 비게 된다. 질문자를 특정하지 못하기 때문이다.
+    unresolved = [s.speaker_tag for s in speakers if s.role is Role.UNKNOWN]
+    if not merge_non_doctor and len(unresolved) >= _SPLIT_SUSPICION:
+        warnings.append(
+            f"비의사 화자 {len(unresolved)}명을 판정하지 못했습니다. 한 사람이 쪼개져 "
+            "나온 것이라면 --merge-non-doctor 로 합쳐서 다시 분석하세요. "
+            "녹음 단계에서 --speakers 로 인원을 지정하는 편이 더 낫습니다."
+        )
     pairs, unasked = pair_qa(utterances, roles)
     return AnalysisResult(
         speakers=speakers,
@@ -119,6 +137,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("transcript", type=Path, help="클로바노트 .txt 또는 SenseVoice .json")
     parser.add_argument("--json", action="store_true", help="사람이 읽는 표 대신 JSON으로 출력")
     parser.add_argument(
+        "--merge-non-doctor",
+        action="store_true",
+        help="비의사 화자를 한 사람으로 합쳐 판정한다. 화자분리가 한 사람을 여러 명으로 쪼갰을 때 쓴다.",
+    )
+    parser.add_argument(
         "--department",
         help=f"진료과 용어 사전. 있는 것: {', '.join(terminology.available())}",
     )
@@ -132,7 +155,9 @@ def main(argv: list[str] | None = None) -> int:
 
     has_speakers = any(u.speaker_tag for u in utterances)
     result = (
-        analyze_with_speakers(utterances, terms=terms)
+        analyze_with_speakers(
+            utterances, terms=terms, merge_non_doctor=args.merge_non_doctor
+        )
         if has_speakers
         else analyze_without_speakers(utterances, terms=terms)
     )
