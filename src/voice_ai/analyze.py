@@ -19,6 +19,7 @@ from .models import AnalysisResult, Method, Role, SpeakerRole, Utterance
 from .qa import pair_qa
 from .report import build_report_draft
 from .roles import classify, sentence_role, split_sentences
+from .crosscheck import cross_check
 from .terms import find_confusions, find_corrections
 
 
@@ -128,11 +129,33 @@ def _confusion_warnings(
     ]
 
 
+def _crosscheck_warnings(
+    utterances: list[Utterance],
+    other: list[Utterance],
+    terms: terminology.Terminology,
+) -> list[str]:
+    """다른 엔진의 전사와 맞대어 어긋난 자리를 알린다."""
+    lines = []
+    for d in cross_check(utterances, other, terms.all_terms):
+        stamp = f"[{d.start_ms // 60000:02d}:{d.start_ms // 1000 % 60:02d}]"
+        if d.kind == "NUMBER":
+            lines.append(
+                f"{stamp} 숫자가 엇갈립니다. 이쪽 '{d.primary or '없음'}' / "
+                f"다른 엔진 '{d.secondary or '없음'}'. 검사 수치라면 반드시 확인하세요."
+            )
+        elif d.primary:
+            lines.append(f"{stamp} '{d.primary}'은(는) 다른 엔진에 없습니다.")
+        else:
+            lines.append(f"{stamp} 다른 엔진은 '{d.secondary}'이라고 들었습니다.")
+    return lines
+
+
 def analyze_with_speakers(
     utterances: list[Utterance],
     *,
     terms: terminology.Terminology,
     merge_non_doctor: bool = False,
+    compare_with: list[Utterance] | None = None,
 ) -> AnalysisResult:
     """화자 라벨이 있는 전사. 화자 단위로 역할을 가른다."""
     speakers, warnings = classify(
@@ -142,6 +165,8 @@ def analyze_with_speakers(
     if spacing:
         warnings.append(spacing)
     warnings.extend(_confusion_warnings(utterances, terms))
+    if compare_with:
+        warnings.extend(_crosscheck_warnings(utterances, compare_with, terms))
     roles = {s.speaker_tag: s.role for s in speakers}
 
     # 판정 불가가 쌓이면 Q&A가 통째로 비게 된다. 질문자를 특정하지 못하기 때문이다.
@@ -176,6 +201,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("transcript", type=Path, help="클로바노트 .txt 또는 SenseVoice .json")
     parser.add_argument("--json", action="store_true", help="사람이 읽는 표 대신 JSON으로 출력")
     parser.add_argument(
+        "--compare",
+        type=Path,
+        help="다른 엔진으로 만든 전사. 숫자와 용어가 엇갈리는 자리를 표시한다.",
+    )
+    parser.add_argument(
         "--merge-non-doctor",
         action="store_true",
         help="비의사 화자를 한 사람으로 합쳐 판정한다. 화자분리가 한 사람을 여러 명으로 쪼갰을 때 쓴다.",
@@ -195,7 +225,10 @@ def main(argv: list[str] | None = None) -> int:
     has_speakers = any(u.speaker_tag for u in utterances)
     result = (
         analyze_with_speakers(
-            utterances, terms=terms, merge_non_doctor=args.merge_non_doctor
+            utterances,
+            terms=terms,
+            merge_non_doctor=args.merge_non_doctor,
+            compare_with=load(args.compare)[0] if args.compare else None,
         )
         if has_speakers
         else analyze_without_speakers(utterances, terms=terms)
