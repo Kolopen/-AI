@@ -76,6 +76,23 @@ def _split_long(samples: np.ndarray, max_samples: int) -> list[tuple[int, np.nda
     return pieces
 
 
+def _sense_voice(model: Path, tokens: Path, num_threads: int, language: str):
+    """SenseVoice 인식기를 만든다.
+
+    언어를 비워 두면 자동 감지에 맡기게 되는데, 한국어 진료 녹음이 통째로
+    중국어·광둥어로 인식되는 일이 실제로 있었다. 못 박아 두는 편이 안전하다.
+    """
+    import sherpa_onnx
+
+    return sherpa_onnx.OfflineRecognizer.from_sense_voice(
+        model=str(model),
+        tokens=str(tokens),
+        num_threads=num_threads,
+        language=language,
+        use_itn=True,
+    )
+
+
 def diarize(
     audio: np.ndarray,
     *,
@@ -121,13 +138,12 @@ def transcribe_turns(
     model: Path,
     tokens: Path,
     num_threads: int = 4,
+    language: str = "ko",
 ) -> list[dict]:
     """화자분리가 잡아준 구간마다 전사한다. 구간이 곧 한 사람의 발언이다."""
     import sherpa_onnx
 
-    recognizer = sherpa_onnx.OfflineRecognizer.from_sense_voice(
-        model=str(model), tokens=str(tokens), num_threads=num_threads, use_itn=True
-    )
+    recognizer = _sense_voice(model, tokens, num_threads, language)
 
     chunks: list[dict] = []
     for speaker, start_ms, end_ms in turns:
@@ -162,6 +178,7 @@ def transcribe(
     num_threads: int = 4,
     min_silence_duration: float = 0.25,
     max_speech_duration: float = 10.0,
+    language: str = "ko",
 ) -> list[dict]:
     """VAD로 자르고 구간마다 SenseVoice를 돌려 chunks를 만든다.
 
@@ -172,12 +189,7 @@ def transcribe(
     """
     import sherpa_onnx
 
-    recognizer = sherpa_onnx.OfflineRecognizer.from_sense_voice(
-        model=str(model),
-        tokens=str(tokens),
-        num_threads=num_threads,
-        use_itn=True,
-    )
+    recognizer = _sense_voice(model, tokens, num_threads, language)
 
     config = sherpa_onnx.VadModelConfig()
     config.silero_vad.model = str(vad_model)
@@ -249,6 +261,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--out", type=Path, default=Path("chunks.json"))
     parser.add_argument("--threads", type=int, default=4)
     parser.add_argument(
+        "--language",
+        default="ko",
+        help="전사 언어. auto로 두면 한국어를 중국어로 잘못 잡는 일이 있다.",
+    )
+    parser.add_argument(
         "--max-speech",
         type=float,
         default=10.0,
@@ -281,7 +298,12 @@ def main(argv: list[str] | None = None) -> int:
         speakers = sorted({speaker for speaker, _, _ in turns})
         print(f"화자 {len(speakers)}명, 발언 {len(turns)}구간을 찾았습니다. 전사를 시작합니다.")
         chunks = transcribe_turns(
-            audio, turns, model=args.model, tokens=args.tokens, num_threads=args.threads
+            audio,
+            turns,
+            model=args.model,
+            tokens=args.tokens,
+            num_threads=args.threads,
+            language=args.language,
         )
     else:
         print("전사를 시작합니다.")
@@ -293,6 +315,7 @@ def main(argv: list[str] | None = None) -> int:
             num_threads=args.threads,
             min_silence_duration=args.min_silence,
             max_speech_duration=args.max_speech,
+            language=args.language,
         )
 
     args.out.write_text(json.dumps(chunks, ensure_ascii=False, indent=2), encoding="utf-8")
