@@ -38,7 +38,12 @@ _TOKEN = re.compile(r"[가-힣]{2,}")
 _SPACE = re.compile(r"\s+")
 
 # 이 아래로 비슷하면 다른 단어로 본다. 약 이름을 잘못 고치는 쪽이 더 위험하므로 보수적으로 잡는다.
-SIMILARITY_THRESHOLD = 0.78
+#
+# 올바른 형태가 같은 전사문에 이미 나왔으면 근거가 훨씬 강하므로 기준을 낮춘다.
+# 실제 녹음에서 "간 보호제"가 앞에 정확히 실린 뒤 뒤에서 "감보제"로 잘못 나왔는데,
+# 둘의 유사도가 0.75라 하나의 엄격한 기준으로는 놓쳤다.
+THRESHOLD_IN_DOCUMENT = 0.70
+THRESHOLD_DICTIONARY = 0.80
 
 
 def to_jamo(text: str) -> str:
@@ -107,7 +112,12 @@ def find_corrections(
                 if score > best_score:
                     best_term, best_score = term, score
 
-            if best_term is None or best_score < SIMILARITY_THRESHOLD:
+            if best_term is None:
+                continue
+
+            in_document = best_term in present
+            threshold = THRESHOLD_IN_DOCUMENT if in_document else THRESHOLD_DICTIONARY
+            if best_score < threshold:
                 continue
             if (candidate, best_term) in seen:
                 continue
@@ -118,7 +128,7 @@ def find_corrections(
                     original=candidate,
                     corrected=best_term,
                     similarity=round(best_score, 3),
-                    evidence="IN_DOCUMENT" if best_term in present else "DICTIONARY",
+                    evidence="IN_DOCUMENT" if in_document else "DICTIONARY",
                     start_ms=utterance.start_ms,
                 )
             )

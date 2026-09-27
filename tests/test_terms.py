@@ -49,3 +49,31 @@ def test_unrelated_words_are_left_alone():
 def test_phonetic_similarity_separates_near_and_far():
     assert phonetic_similarity("관보제", "간보호제") > 0.8
     assert phonetic_similarity("항생제", "콜레스테롤") < 0.4
+
+
+def test_in_document_evidence_lowers_the_bar():
+    """올바른 형태가 앞에 이미 나왔으면 조금 덜 닮아도 교정한다.
+
+    실제 녹음에서 "간 보호제"가 먼저 실린 뒤 "감보제"로 잘못 나왔는데,
+    유사도가 0.75라 하나의 엄격한 기준으로는 놓쳤다.
+    """
+    transcript = [
+        Utterance("D", 0, 8_000, "간 수치가 높으시니까 간 보호제 있잖아요."),
+        Utterance("D", 8_000, 16_000, "저 감보제 드시던 거 있잖아요."),
+    ]
+
+    corrections = find_corrections(transcript, DICTIONARY)
+
+    caught = {c.original: c for c in corrections}
+    assert "감보제" in caught
+    assert caught["감보제"].corrected == "간보호제"
+    assert caught["감보제"].evidence == "IN_DOCUMENT"
+
+
+def test_dictionary_only_evidence_stays_strict():
+    """사전에만 있는 말은 더 닮아야 교정한다. 약 이름을 잘못 고치는 쪽이 위험하다."""
+    transcript = [Utterance("D", 0, 5_000, "저 감보제 드시던 거 있잖아요.")]
+
+    corrections = find_corrections(transcript, DICTIONARY)
+
+    assert not any(c.original == "감보제" for c in corrections)
