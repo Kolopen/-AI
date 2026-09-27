@@ -61,3 +61,23 @@ def test_fragment_of_a_known_term_is_not_corrected():
     corrections = find_corrections(transcript, set(terms.all_terms))
 
     assert not any(c.original == "내장" for c in corrections)
+
+
+def test_particle_suffix_is_not_dragged_to_another_term():
+    """'콜레스테롤이'는 조사가 붙었을 뿐인데 '콜레스테롤약'으로 끌려갔었다."""
+    terms = terminology.load("내과")
+    transcript = [Utterance("D", 0, 6_000, "콜레스테롤이 200이 정상인데 216입니다.")]
+
+    corrections = find_corrections(transcript, set(terms.all_terms))
+
+    assert not any("콜레스테롤" in c.original for c in corrections)
+
+
+def test_two_letter_words_are_not_turned_into_drug_names():
+    """'이제'가 '이뇨제'로, '였고'가 '연고'로 바뀌면 리포트가 엉뚱해진다."""
+    terms = terminology.load("내과")
+    transcript = [Utterance("D", 0, 6_000, "이제 작년에는 수치가 높았고 올해는 괜찮습니다.")]
+
+    corrections = find_corrections(transcript, set(terms.all_terms))
+
+    assert corrections == []

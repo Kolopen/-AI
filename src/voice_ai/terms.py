@@ -45,6 +45,11 @@ _SPACE = re.compile(r"\s+")
 THRESHOLD_IN_DOCUMENT = 0.70
 THRESHOLD_DICTIONARY = 0.80
 
+# 두 글자 말은 우연히 닮기 쉽다. "이제"가 "이뇨제"로, "였고"가 "연고"로 끌려갔다.
+# 흔한 부사와 어미가 약 이름으로 바뀌면 리포트가 엉뚱해지므로 사실상 일치를 요구한다.
+SHORT_CANDIDATE_LENGTH = 2
+THRESHOLD_SHORT = 0.95
+
 
 def to_jamo(text: str) -> str:
     """한글을 자모로 푼다. 발음이 비슷한 오인식을 거리로 재기 위한 것."""
@@ -101,10 +106,14 @@ def find_corrections(
         for candidate in _candidates(utterance.text):
             if candidate in dictionary:
                 continue
-            # 사전 용어의 일부라면 오인식이 아니라 제대로 들린 조각이다.
-            # "복부 내장지방"이 "복부 내장 지방"으로 띄어 써지면 "내장"이 홀로 남는데,
+            # 사전 용어와 포함 관계면 오인식이 아니다. 양쪽 다 걸러야 한다.
+            #
+            # 후보가 용어의 일부인 경우: "복부 내장지방"이 띄어 써져 "내장"만 남은 것.
             # 이걸 발음이 비슷한 "신장"으로 고치면 콩팥 이야기로 둔갑한다.
-            if any(candidate in term for term in dictionary):
+            #
+            # 후보가 용어를 품은 경우: "콜레스테롤이"처럼 조사가 붙은 것.
+            # 그냥 두면 "콜레스테롤약" 같은 다른 용어로 끌려간다.
+            if any(candidate in term or term in candidate for term in dictionary):
                 continue
 
             best_term, best_score = None, 0.0
@@ -122,6 +131,8 @@ def find_corrections(
 
             in_document = best_term in present
             threshold = THRESHOLD_IN_DOCUMENT if in_document else THRESHOLD_DICTIONARY
+            if len(candidate) <= SHORT_CANDIDATE_LENGTH:
+                threshold = max(threshold, THRESHOLD_SHORT)
             if best_score < threshold:
                 continue
             if (candidate, best_term) in seen:
