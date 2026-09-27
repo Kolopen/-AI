@@ -81,3 +81,46 @@ def test_two_letter_words_are_not_turned_into_drug_names():
     corrections = find_corrections(transcript, set(terms.all_terms))
 
     assert corrections == []
+
+
+def test_real_words_swapped_for_each_other_are_flagged_by_context():
+    """신장(콩팥)과 심장은 0.833으로 닮았지만 둘 다 실재하는 말이다.
+
+    발음 유사도로는 못 거른다. 실제 녹음에서 두 엔진이 모두 "피검사에서는
+    신장이라든지 소변 검사"를 "심장"으로 썼다.
+    """
+    from voice_ai.terms import find_confusions
+
+    terms = terminology.load("내과")
+    transcript = [
+        Utterance("D", 0, 9_000, "피검사에서는 심장이라든지 빈혈, 소변 검사 이런 건 괜찮으시고,")
+    ]
+
+    found = find_confusions(transcript, terms.confusable)
+
+    assert [(c.written, c.suspected) for c in found] == [("심장", "신장")]
+
+
+def test_a_term_with_its_own_context_is_left_alone():
+    """심전도 이야기 중의 "심장"은 심장이 맞다."""
+    from voice_ai.terms import find_confusions
+
+    terms = terminology.load("내과")
+    transcript = [
+        Utterance("D", 0, 9_000, "심전도 찍어보니 심장은 괜찮으시고 부정맥도 없으세요.")
+    ]
+
+    assert find_confusions(transcript, terms.confusable) == []
+
+
+def test_distant_context_does_not_trigger_a_confusion():
+    """20초 넘게 떨어진 말은 다른 화제다."""
+    from voice_ai.terms import find_confusions
+
+    terms = terminology.load("내과")
+    transcript = [
+        Utterance("D", 0, 5_000, "심장은 괜찮으십니다."),
+        Utterance("D", 120_000, 125_000, "소변 검사도 해보겠습니다."),
+    ]
+
+    assert find_confusions(transcript, terms.confusable) == []

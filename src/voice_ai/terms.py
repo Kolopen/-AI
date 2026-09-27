@@ -151,3 +151,64 @@ def find_corrections(
 
     corrections.sort(key=lambda c: (c.evidence != "IN_DOCUMENT", -c.similarity))
     return corrections
+
+
+# 이 정도로 발음이 닮은 용어끼리만 서로 의심한다. 신장/심장이 0.833이다.
+CONFUSABLE_SIMILARITY = 0.75
+
+# 문맥 단어를 이만큼 떨어진 발화까지 본다. 의사는 한 화제를 몇 문장에 걸쳐 말한다.
+CONTEXT_WINDOW_MS = 20_000
+
+
+@dataclass
+class Confusion:
+    written: str
+    suspected: str
+    cue: str
+    start_ms: int
+
+
+def find_confusions(
+    utterances: list[Utterance], confusable: dict[str, tuple[str, ...]]
+) -> list[Confusion]:
+    """실재하는 두 용어가 서로 바뀌어 전사된 것을 문맥으로 의심한다.
+
+    "신장"과 "심장"은 발음이 0.833으로 닮았지만 둘 다 사전에 있는 말이라
+    find_corrections 가 거른다. 대신 주변에 무엇이 함께 나왔는지를 본다.
+    소변 검사 옆의 "심장"은 콩팥일 가능성이 높다.
+
+    고치지는 않는다. 장기 이름을 잘못 바꾸는 쪽이 틀린 채로 두는 것보다 위험하다.
+    사람이 녹음을 다시 듣고 정하도록 표시만 한다.
+    """
+    found: list[Confusion] = []
+    seen: set[tuple[str, str, int]] = set()
+
+    for utterance in utterances:
+        for written, own_cues in confusable.items():
+            if written not in utterance.text:
+                continue
+
+            nearby = " ".join(
+                other.text
+                for other in utterances
+                if abs(other.start_ms - utterance.start_ms) <= CONTEXT_WINDOW_MS
+            )
+            # 제 문맥이 하나라도 있으면 쓰인 대로 믿는다.
+            if any(cue in nearby for cue in own_cues):
+                continue
+
+            for other, other_cues in confusable.items():
+                if other == written:
+                    continue
+                if phonetic_similarity(written, other) < CONFUSABLE_SIMILARITY:
+                    continue
+                cue = next((c for c in other_cues if c in nearby), None)
+                if cue is None:
+                    continue
+                key = (written, other, utterance.start_ms)
+                if key in seen:
+                    continue
+                seen.add(key)
+                found.append(Confusion(written, other, cue, utterance.start_ms))
+
+    return found

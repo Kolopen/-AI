@@ -19,7 +19,7 @@ from .models import AnalysisResult, Method, Role, SpeakerRole, Utterance
 from .qa import pair_qa
 from .report import build_report_draft
 from .roles import classify, sentence_role, split_sentences
-from .terms import find_corrections
+from .terms import find_confusions, find_corrections
 
 
 
@@ -116,6 +116,18 @@ def _spacing_warning(utterances: list[Utterance]) -> str | None:
     )
 
 
+def _confusion_warnings(
+    utterances: list[Utterance], terms: terminology.Terminology
+) -> list[str]:
+    """실재하는 두 용어가 서로 바뀐 것으로 보이면 알린다. 고치지는 않는다."""
+    return [
+        f"[{c.start_ms // 60000:02d}:{c.start_ms // 1000 % 60:02d}] '{c.written}'이(가) "
+        f"'{c.suspected}'일 수 있습니다. 주변에 '{c.cue}'이(가) 나옵니다. "
+        "둘 다 실재하는 말이라 자동으로 고치지 않습니다. 녹음을 확인하세요."
+        for c in find_confusions(utterances, terms.confusable)
+    ]
+
+
 def analyze_with_speakers(
     utterances: list[Utterance],
     *,
@@ -129,6 +141,7 @@ def analyze_with_speakers(
     spacing = _spacing_warning(utterances)
     if spacing:
         warnings.append(spacing)
+    warnings.extend(_confusion_warnings(utterances, terms))
     roles = {s.speaker_tag: s.role for s in speakers}
 
     # 판정 불가가 쌓이면 Q&A가 통째로 비게 된다. 질문자를 특정하지 못하기 때문이다.
