@@ -254,3 +254,15 @@ def apply_corrections(text: str, corrections: list[TermCorrection]) -> str:
         cursor = end
     out.append(text[cursor:])
     return "".join(out)
+
+
+def corrected_text(text: str, corrections: list[TermCorrection]) -> str:
+    """표시 없이 교정만 반영한다. 사람에게 보여줄 것이 아니라 대조용이다.
+
+    사실 추출은 "간보제"를 약품으로 알아보지 못한다. 사전에 없는 오인식이기
+    때문이다. 화면에 쓰는 apply_corrections 는 원문을 괄호로 남기는데, 그
+    괄호가 대조를 방해하므로 여기서는 값만 바꾼다.
+    """
+    for correction in sorted(corrections, key=lambda c: -len(c.original)):
+        text = text.replace(correction.original, correction.corrected)
+    return text

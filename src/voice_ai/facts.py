@@ -19,6 +19,7 @@ from dataclasses import dataclass, field
 from .models import Role, Utterance
 from .roles import split_sentences
 from .terminology import Terminology
+from .terms import TermCorrection, corrected_text, phonetic_similarity
 
 _NUMBER = re.compile(r"\d+")
 
@@ -28,11 +29,40 @@ _REDUCE = re.compile(r"([가-힣]{1,6}?)\s*(?:도|를|을|은|는)?\s*(?:줄이|
 # "운동 열심히 하셔서", "운동도 열심히"
 _EFFORT = re.compile(r"([가-힣]{2,6})\s*(?:도|를|을)?\s*열심히")
 
+# 복용 주기. 값만 필요하므로 걸린 부분만 떼어낸다. 문장을 통째로 실으면
+# "하루에 하나하시면만 드시면 되니까" 처럼 깨진 어미가 따라온다.
+_SCHEDULE = re.compile(
+    r"하루(?:에)?\s*(?:하나|한\s*개|한\s*알|한\s*번|[한두세네\d]\s*(?:번|알|개|정|캡슐))"
+    r"|아침저녁|하루\s*[한두세네\d]\s*끼|식후|식전|자기\s*전|매일"
+)
+
+# 처방 기간.
+_DURATION = re.compile(r"(?:[\d]+|한|두|세|네|다섯|여섯|열)\s*(?:달|개월|주일|주)\s*(?:분|치)?")
+
 # 이상이 없다고 말한 항목. 진단으로 올리면 없는 병이 기록에 남는다.
 _NORMAL = re.compile(r"괜찮|이상\s*없|문제\s*없|없으세|없어요")
 
 # 용어 뒤 이만큼 안에서 "괜찮다"는 말이 나오면 그 항목을 가리킨 것으로 본다.
 _NORMAL_WINDOW = 25
+
+# 생활 지도 대상을 표준 이름으로 모을 때 쓰는 기준. 전사가 흔들려도 같은 것을
+# 가리킨다고 볼 만한 선이다. "허리리"/"허리" 0.80, "운동부"/"운동" 0.857 이고,
+# 뜻이 다른 "야식"/"운동" 은 0.18 이라 섞이지 않는다.
+LIFESTYLE_SIMILARITY = 0.75
+
+
+def _canonical(target: str, vocabulary: frozenset[str]) -> str:
+    """전사가 흔들린 대상을 표준 이름으로 모은다.
+
+    "허리리 줄이기"와 "허리 줄이기"가 따로 남으면 같은 지도가 둘로 보인다.
+    사전에 없는 말은 그대로 둔다. 의사가 무엇을 줄이라 했는지 버릴 수는 없다.
+    """
+    best, score = None, LIFESTYLE_SIMILARITY
+    for word in vocabulary:
+        similarity = phonetic_similarity(target, word)
+        if similarity >= score:
+            best, score = word, similarity
+    return best or target
 
 
 # 검사 이름을 앞 구간에서 이어받을 수 있는 시간. 의사는 "간 수치가 높죠" 하고
@@ -53,6 +83,9 @@ class Measurement:
 @dataclass
 class Facts:
     measurements: list[Measurement] = field(default_factory=list)
+    drugs: list[str] = field(default_factory=list)
+    schedule: list[str] = field(default_factory=list)
+    duration: list[str] = field(default_factory=list)
     diagnoses: list[tuple[str, int]] = field(default_factory=list)
     # 의사가 "괜찮다"고 말한 항목. 진단과 섞으면 없는 병이 기록에 남는다.
     normal: list[str] = field(default_factory=list)
@@ -71,9 +104,23 @@ def _doctor_sentences(
 
 
 def extract(
-    utterances: list[Utterance], roles: dict[str, Role], terms: Terminology
+    utterances: list[Utterance],
+    roles: dict[str, Role],
+    terms: Terminology,
+    corrections: list[TermCorrection] | None = None,
 ) -> Facts:
-    """검사 수치·진단·생활 지도를 값으로 뽑는다."""
+    """검사 수치·진단·복용·생활 지도를 값으로 뽑는다.
+
+    교정을 먼저 반영한다. "간보제"는 사전에 없어 약품으로 알아보지 못하는데,
+    바로 그것이 교정이 잡아낸 오인식이다.
+    """
+    if corrections:
+        utterances = [
+            Utterance(
+                u.speaker_tag, u.start_ms, u.end_ms, corrected_text(u.text, corrections)
+            )
+            for u in utterances
+        ]
     facts = Facts()
     seen_tests: set[tuple[str, str]] = set()
     seen_conditions: set[str] = set()
@@ -129,13 +176,29 @@ def extract(
             else:
                 facts.diagnoses.append((condition, utterance.start_ms))
 
+        for drug in terms.drugs:
+            if drug in compact and drug not in facts.drugs:
+                facts.drugs.append(drug)
+        for match in _SCHEDULE.finditer(sentence):
+            value = " ".join(match.group().split())
+            if value not in facts.schedule:
+                facts.schedule.append(value)
+        for match in _DURATION.finditer(sentence):
+            value = " ".join(match.group().split())
+            # "두 달"과 "두 달분"은 같은 말이다. 긴 쪽만 남긴다.
+            if any(value.startswith(kept) for kept in facts.duration):
+                facts.duration = [k for k in facts.duration if not value.startswith(k)]
+            elif any(kept.startswith(value) for kept in facts.duration):
+                continue
+            facts.duration.append(value)
+
         for match in _REDUCE.finditer(sentence):
-            target = match.group(1).strip()
-            if len(target) >= 1 and target not in seen_advice:
+            target = _canonical(match.group(1).strip(), terms.lifestyle)
+            if target and target not in seen_advice:
                 seen_advice.add(target)
                 facts.lifestyle.append(f"{target} 줄이기")
         for match in _EFFORT.finditer(sentence):
-            target = match.group(1).strip()
+            target = _canonical(match.group(1).strip(), terms.lifestyle)
             if target not in seen_advice:
                 seen_advice.add(target)
                 facts.lifestyle.append(target)

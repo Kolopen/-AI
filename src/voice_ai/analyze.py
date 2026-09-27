@@ -282,8 +282,9 @@ def main(argv: list[str] | None = None) -> int:
         print(f"        -> {pair.answer[:80]}")
 
     roles_by_tag = {sp.speaker_tag: sp.role for sp in result.speakers}
-    facts = extract_facts(utterances, roles_by_tag, terms)
-    if facts.measurements or facts.diagnoses or facts.normal or facts.lifestyle:
+    facts = extract_facts(utterances, roles_by_tag, terms, corrections)
+    if any([facts.measurements, facts.diagnoses, facts.normal, facts.drugs,
+            facts.schedule, facts.duration, facts.lifestyle]):
         print("\n핵심 내용")
         if facts.measurements:
             print("  [검사 수치]")
@@ -298,6 +299,14 @@ def main(argv: list[str] | None = None) -> int:
         if facts.normal:
             print("  [이상 없다고 한 항목]")
             print(f"    {', '.join(facts.normal)}")
+        if facts.drugs or facts.schedule or facts.duration:
+            print("  [복용]")
+            row = [", ".join(facts.drugs) or "약품 미확인"]
+            if facts.schedule:
+                row.append(" / ".join(facts.schedule))
+            if facts.duration:
+                row.append(" / ".join(facts.duration))
+            print(f"    {'   '.join(row)}")
         if facts.lifestyle:
             print("  [생활 지도]")
             print(f"    {', '.join(facts.lifestyle)}")

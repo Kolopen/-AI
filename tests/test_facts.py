@@ -91,3 +91,56 @@ def test_the_patient_is_not_quoted_as_the_doctor():
     )
 
     assert found.measurements == []
+
+
+def test_a_shaky_transcription_maps_to_the_standard_name():
+    """전사가 "허리리", "운동부" 로 흔들려도 같은 지도로 모여야 한다.
+
+    안 모으면 "운동"과 "운동부"가 따로 남아 지도가 둘로 보인다.
+    """
+    found = extract(
+        [
+            Utterance("D", 0, 9_000, "허리리를 줄이셔야 되고"),
+            Utterance("D", 9_000, 15_000, "운동 열심히 하시고 체중 줄이시면"),
+            Utterance("D", 15_000, 20_000, "운동부 열심히 하시고 하시는게 좋겠네요"),
+        ],
+        ROLES,
+        TERMS,
+    )
+
+    assert found.lifestyle == ["허리 줄이기", "체중 줄이기", "운동"]
+
+
+def test_a_word_outside_the_vocabulary_is_kept_as_heard():
+    """의사가 무엇을 줄이라 했는지 버릴 수는 없다."""
+    found = extract([Utterance("D", 0, 9_000, "탄산음료 줄이셔야 됩니다")], ROLES, TERMS)
+
+    assert found.lifestyle == ["탄산음료 줄이기"]
+
+
+def test_schedule_and_duration_come_out_as_values():
+    """문장을 통째로 실으면 "하나하시면만 드시면 되니까" 가 따라온다."""
+    found = extract(
+        [
+            Utterance("D", 0, 9_000, "그거를 매일 하루에 하나하시면만 드시면 되니까"),
+            Utterance("D", 9_000, 15_000, "두 달 드셨었잖아요 두 달분 드렸으니까"),
+        ],
+        ROLES,
+        TERMS,
+    )
+
+    assert found.schedule == ["매일", "하루에 하나"]
+    assert found.duration == ["두 달분"]
+
+
+def test_a_misheard_drug_is_recognised_after_correction():
+    """"간보제"는 사전에 없다. 그것이 바로 교정이 잡아낸 오인식이다."""
+    from voice_ai.terms import find_corrections
+
+    utterances = [
+        Utterance("D", 0, 9_000, "간 보호제 있잖아요 그거를 좀 드셔주시면"),
+        Utterance("D", 9_000, 15_000, "저 간보제 드시던 거 있잖아요"),
+    ]
+    corrections = find_corrections(utterances, set(TERMS.all_terms))
+
+    assert extract(utterances, ROLES, TERMS, corrections).drugs == ["간보호제"]

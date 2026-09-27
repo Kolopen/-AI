@@ -18,7 +18,7 @@ TERMS_DIR = Path(__file__).parent / "data" / "terms"
 # 진료과를 고르지 않아도 늘 함께 불러오는 사전.
 COMMON = "공통"
 
-_SECTION = re.compile(r"^\[(drug|condition|test|confusable)\]$")
+_SECTION = re.compile(r"^\[(drug|condition|test|confusable|lifestyle)\]$")
 
 # "신장 = 소변 크레아티닌" 처럼 용어와 그 용어가 나올 만한 문맥 단어를 적는다.
 _CONFUSABLE = re.compile(r"^(\S+)\s*=\s*(.+)$")
@@ -29,6 +29,8 @@ class Terminology:
     drugs: frozenset[str] = frozenset()
     conditions: frozenset[str] = frozenset()
     tests: frozenset[str] = frozenset()
+    # 생활 지도의 표준 이름. 전사가 흔들려도 여기로 모은다.
+    lifestyle: frozenset[str] = frozenset()
     # 발음이 닮아 서로 바뀌어 전사되는 용어와, 그 용어가 나올 만한 문맥 단어.
     # 둘 다 사전에 있는 실재 단어라 발음 유사도로는 걸러지지 않는다.
     confusable: dict[str, tuple[str, ...]] = field(default_factory=dict)
@@ -42,6 +44,7 @@ class Terminology:
             drugs=self.drugs | other.drugs,
             conditions=self.conditions | other.conditions,
             tests=self.tests | other.tests,
+            lifestyle=self.lifestyle | other.lifestyle,
             confusable={**self.confusable, **other.confusable},
         )
 
@@ -52,7 +55,9 @@ def available() -> list[str]:
 
 
 def _read(path: Path) -> Terminology:
-    buckets: dict[str, set[str]] = {"drug": set(), "condition": set(), "test": set()}
+    buckets: dict[str, set[str]] = {
+        "drug": set(), "condition": set(), "test": set(), "lifestyle": set()
+    }
     confusable: dict[str, tuple[str, ...]] = {}
     section: str | None = None
 
@@ -74,6 +79,7 @@ def _read(path: Path) -> Terminology:
         drugs=frozenset(buckets["drug"]),
         conditions=frozenset(buckets["condition"]),
         tests=frozenset(buckets["test"]),
+        lifestyle=frozenset(buckets["lifestyle"]),
         confusable=confusable,
     )
 
