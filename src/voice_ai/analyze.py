@@ -20,6 +20,7 @@ from .qa import pair_qa
 from .report import build_report_draft
 from .roles import classify, sentence_role, split_sentences
 from .crosscheck import cross_check
+from .facts import extract as extract_facts
 from .turns import group_turns
 from .terms import apply_corrections, find_confusions, find_corrections
 
@@ -279,6 +280,27 @@ def main(argv: list[str] | None = None) -> int:
     for pair in result.qa_pairs:
         print(f"  [{pair.question_at_ms // 1000}초] ({pair.asked_by.value}) {pair.question}")
         print(f"        -> {pair.answer[:80]}")
+
+    roles_by_tag = {sp.speaker_tag: sp.role for sp in result.speakers}
+    facts = extract_facts(utterances, roles_by_tag, terms)
+    if facts.measurements or facts.diagnoses or facts.normal or facts.lifestyle:
+        print("\n핵심 내용")
+        if facts.measurements:
+            print("  [검사 수치]")
+            for m in facts.measurements:
+                stamp = f"{m.start_ms // 60000:02d}:{m.start_ms // 1000 % 60:02d}"
+                mark = "  (검사명 추정)" if m.inferred else ""
+                print(f"    {m.test:8} {', '.join(m.values)}{mark}")
+                print(f"    {'':8} └ [{stamp}] {apply_corrections(m.quote, corrections)}")
+        if facts.diagnoses:
+            print("  [진단·소견]")
+            print(f"    {', '.join(name for name, _ in facts.diagnoses)}")
+        if facts.normal:
+            print("  [이상 없다고 한 항목]")
+            print(f"    {', '.join(facts.normal)}")
+        if facts.lifestyle:
+            print("  [생활 지도]")
+            print(f"    {', '.join(facts.lifestyle)}")
 
     draft = result.report_draft
     sections = [
