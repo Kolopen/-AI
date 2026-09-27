@@ -62,3 +62,40 @@ def test_a_segment_the_other_engine_dropped_is_skipped():
     sensevoice: list[Utterance] = []
 
     assert cross_check(moonshine, sensevoice, TERMS) == []
+
+
+def test_one_long_segment_does_not_repeat_the_same_finding():
+    """엔진마다 구간을 다르게 나눈다.
+
+    한쪽의 긴 구간이 상대의 여러 구간과 겹친다고 해서 같은 발견을 그만큼
+    반복하면 안 된다. 실제로 '지방간' 하나가 11번 나왔다.
+    """
+    moonshine = [Utterance("D", i * 8_000, i * 8_000 + 8_000, "간 수치가 좀 높죠.") for i in range(11)]
+    sensevoice = [Utterance("D", 0, 88_000, "지방간 때문에 간수치가 좀 높으세요.")]
+
+    found = cross_check(moonshine, sensevoice, TERMS)
+
+    assert [d.secondary for d in found if d.kind == "TERM"].count("지방간") == 1
+
+
+def test_only_the_numbers_that_differ_are_named():
+    """목록 전체를 다시 보여주면 어느 것이 문제인지 알 수 없다."""
+    moonshine = [Utterance("D", 0, 9_000, "간수치가 76에 34이고 요산은 7입니다.")]
+    sensevoice = [Utterance("D", 0, 9_000, "간수치가 76에 34이고 요산은 9입니다.")]
+
+    numbers = [d for d in cross_check(moonshine, sensevoice, TERMS) if d.kind == "NUMBER"]
+
+    assert len(numbers) == 1
+    assert numbers[0].primary == "7"
+    assert numbers[0].secondary == "9"
+
+
+def test_a_repeated_number_is_counted_twice():
+    """40이 두 번 나왔는데 한 번만 들었다면 그것도 엇갈림이다."""
+    moonshine = [Utterance("D", 0, 9_000, "40에서 40으로 그대로입니다.")]
+    sensevoice = [Utterance("D", 0, 9_000, "40 그대로입니다.")]
+
+    numbers = [d for d in cross_check(moonshine, sensevoice, TERMS) if d.kind == "NUMBER"]
+
+    assert numbers[0].primary == "40"
+    assert numbers[0].secondary == ""

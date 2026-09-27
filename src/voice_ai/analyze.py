@@ -139,9 +139,14 @@ def _crosscheck_warnings(
     for d in cross_check(utterances, other, terms.all_terms):
         stamp = f"[{d.start_ms // 60000:02d}:{d.start_ms // 1000 % 60:02d}]"
         if d.kind == "NUMBER":
+            parts = []
+            if d.primary:
+                parts.append(f"'{d.primary}'은(는) 이쪽에만")
+            if d.secondary:
+                parts.append(f"'{d.secondary}'은(는) 다른 엔진에만")
             lines.append(
-                f"{stamp} 숫자가 엇갈립니다. 이쪽 '{d.primary or '없음'}' / "
-                f"다른 엔진 '{d.secondary or '없음'}'. 검사 수치라면 반드시 확인하세요."
+                f"{stamp} 숫자가 엇갈립니다. {', '.join(parts)} 있습니다. "
+                "검사 수치라면 반드시 확인하세요."
             )
         elif d.primary:
             lines.append(f"{stamp} '{d.primary}'은(는) 다른 엔진에 없습니다.")

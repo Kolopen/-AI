@@ -2,10 +2,14 @@
 
 엔진마다 다른 자리에서 틀린다. 실제 녹음에서 SenseVoice 는 "신장"을 맞추고
 moonshine 이 "심장"으로 썼으며, 숫자를 잇는 말은 반대로 moonshine 이 나았다.
-한쪽만 보면 어디가 틀렸는지 알 수 없지만, 둘을 맞대면 어긋나는 자리가 드러난다.
+한쪽만 보면 어디가 틀렸는지 알 수 없지만, 둘을 맞대면 어긋난 자리가 드러난다.
 
 특히 숫자가 중요하다. 검사 수치는 리포트의 핵심인데 틀려도 그럴듯해 보인다.
 두 엔진이 독립적으로 같은 숫자를 냈다면 믿을 만하고, 다르면 사람이 들어야 한다.
+
+두 엔진의 구간 나누기는 서로 다르다. 같은 화자분리를 먹여도 빈 결과를 내는
+구간이 다르고, 길이 상한을 달리 준 전사끼리 비교할 일도 있다. 그래서 구간을
+짝짓지 않는다. 용어는 녹음 전체에서 한 번씩 보고, 숫자는 시간대로 묶어 본다.
 
 합치지는 않는다. 두 전사를 섞으면 아무도 말하지 않은 문장이 만들어진다.
 한쪽을 본문으로 쓰고, 어긋난 자리만 표시한다.
@@ -20,8 +24,9 @@ from .models import Utterance
 
 _NUMBER = re.compile(r"\d+")
 
-# 두 구간이 이만큼 겹치면 같은 대목으로 본다. 화자분리를 공유하면 보통 정확히 겹친다.
-_MIN_OVERLAP_MS = 500
+# 숫자를 이 길이로 묶어 견준다. 구간 경계가 엇갈려도 같은 칸에 들어가도록
+# 넉넉히 잡되, 한 칸에 여러 검사 수치가 뭉치지 않을 만큼은 짧게 둔다.
+NUMBER_BUCKET_MS = 15_000
 
 
 @dataclass
@@ -32,49 +37,67 @@ class Disagreement:
     secondary: str
 
 
-def _overlap(a: Utterance, b: Utterance) -> int:
-    return min(a.end_ms, b.end_ms) - max(a.start_ms, b.start_ms)
+def _first_seen(utterances: list[Utterance], terms: frozenset[str]) -> dict[str, int]:
+    """용어마다 처음 나온 시각. 같은 용어를 여러 번 알리지 않기 위한 것."""
+    seen: dict[str, int] = {}
+    for utterance in utterances:
+        for term in terms:
+            if term in utterance.text and term not in seen:
+                seen[term] = utterance.start_ms
+    return seen
 
 
-def align(primary: list[Utterance], secondary: list[Utterance]) -> list[tuple[Utterance, str]]:
-    """본문 구간마다 같은 시간대의 다른 엔진 전사를 붙인다.
+def _numbers_by_bucket(utterances: list[Utterance]) -> dict[int, list[str]]:
+    buckets: dict[int, list[str]] = {}
+    for utterance in utterances:
+        bucket = utterance.start_ms // NUMBER_BUCKET_MS
+        buckets.setdefault(bucket, []).extend(_NUMBER.findall(utterance.text))
+    return buckets
 
-    화자분리를 한 번만 돌려 두 엔진에 같은 구간을 먹이면 시간이 그대로 맞는다.
-    구간 길이 상한을 다르게 준 경우까지 견디도록 겹침으로 찾는다.
-    """
-    paired: list[tuple[Utterance, str]] = []
-    for utterance in primary:
-        matched = [
-            other.text
-            for other in secondary
-            if _overlap(utterance, other) >= _MIN_OVERLAP_MS
-        ]
-        paired.append((utterance, " ".join(matched)))
-    return paired
+
+def _only_in(these: list[str], those: list[str]) -> list[str]:
+    """중복까지 헤아려 이쪽에만 있는 값을 돌려준다. 76이 두 번이면 두 번 다 본다."""
+    remaining = list(those)
+    extra = []
+    for value in these:
+        if value in remaining:
+            remaining.remove(value)
+        else:
+            extra.append(value)
+    return extra
 
 
 def cross_check(
     primary: list[Utterance], secondary: list[Utterance], terms: frozenset[str]
 ) -> list[Disagreement]:
-    """숫자와 의학 용어가 엇갈리는 자리를 찾는다."""
+    """숫자와 의학 용어가 엇갈리는 자리를 찾는다.
+
+    한쪽이 비어 있으면 비교할 것이 없다. 상대가 통째로 실패한 것을 전부
+    엇갈림으로 세면 경고만 쌓이고 쓸모가 없다.
+    """
+    if not primary or not secondary:
+        return []
+
     found: list[Disagreement] = []
 
-    for utterance, other_text in align(primary, secondary):
-        if not other_text:
-            continue
-
-        mine = _NUMBER.findall(utterance.text)
-        theirs = _NUMBER.findall(other_text)
-        if mine != theirs:
+    mine = _numbers_by_bucket(primary)
+    theirs = _numbers_by_bucket(secondary)
+    for bucket in sorted(set(mine) | set(theirs)):
+        at = bucket * NUMBER_BUCKET_MS
+        here, there = mine.get(bucket, []), theirs.get(bucket, [])
+        missing_there = _only_in(here, there)
+        missing_here = _only_in(there, here)
+        if missing_there or missing_here:
             found.append(
-                Disagreement(utterance.start_ms, "NUMBER", ", ".join(mine), ", ".join(theirs))
+                Disagreement(at, "NUMBER", ", ".join(missing_there), ", ".join(missing_here))
             )
 
-        my_terms = {t for t in terms if t in utterance.text}
-        their_terms = {t for t in terms if t in other_text}
-        for term in sorted(my_terms - their_terms):
-            found.append(Disagreement(utterance.start_ms, "TERM", term, ""))
-        for term in sorted(their_terms - my_terms):
-            found.append(Disagreement(utterance.start_ms, "TERM", "", term))
+    my_terms = _first_seen(primary, terms)
+    their_terms = _first_seen(secondary, terms)
+    for term in sorted(set(my_terms) - set(their_terms)):
+        found.append(Disagreement(my_terms[term], "TERM", term, ""))
+    for term in sorted(set(their_terms) - set(my_terms)):
+        found.append(Disagreement(their_terms[term], "TERM", "", term))
 
+    found.sort(key=lambda d: (d.start_ms, d.kind))
     return found
