@@ -195,7 +195,16 @@ def _fake_engines(seen: dict):
     return module
 
 
-def test_only_sensevoice_gets_a_language(monkeypatch):
+def _touch(directory: Path, *names: str) -> list[Path]:
+    made = []
+    for name in names:
+        path = directory / name
+        path.write_bytes(b"not a real model, only needs to exist")
+        made.append(path)
+    return made
+
+
+def test_only_sensevoice_gets_a_language(monkeypatch, tmp_path):
     """SenseVoice는 다국어라 한국어를 못 박아야 한다.
 
     비워 두면 한국어 진료 녹음이 통째로 중국어로 인식된 적이 있다. 한국어 전용
@@ -208,16 +217,17 @@ def test_only_sensevoice_gets_a_language(monkeypatch):
     seen: dict = {}
     monkeypatch.setitem(sys.modules, "sherpa_onnx", _fake_engines(seen))
 
-    build_recognizer("sensevoice", model=Path("m.onnx"), tokens=Path("t.txt"))
-    build_recognizer(
-        "moonshine", encoder=Path("e.onnx"), decoder=Path("d.onnx"), tokens=Path("t.txt")
+    model, encoder, decoder, tokens = _touch(
+        tmp_path, "m.onnx", "e.ort", "d.ort", "t.txt"
     )
+    build_recognizer("sensevoice", model=model, tokens=tokens)
+    build_recognizer("moonshine", encoder=encoder, decoder=decoder, tokens=tokens)
 
     assert seen["sensevoice"]["language"] == "ko"
     assert "language" not in seen["moonshine"]
 
 
-def test_zipformer_needs_the_joiner(monkeypatch):
+def test_zipformer_needs_the_joiner(monkeypatch, tmp_path):
     """transducer는 encoder·decoder·joiner 셋이 한 벌이다."""
     import sys
 
@@ -226,16 +236,19 @@ def test_zipformer_needs_the_joiner(monkeypatch):
     seen: dict = {}
     monkeypatch.setitem(sys.modules, "sherpa_onnx", _fake_engines(seen))
 
+    encoder, decoder, joiner, tokens = _touch(
+        tmp_path, "e.onnx", "d.onnx", "j.onnx", "t.txt"
+    )
     build_recognizer(
         "zipformer",
-        encoder=Path("e.onnx"),
-        decoder=Path("d.onnx"),
-        joiner=Path("j.onnx"),
-        tokens=Path("t.txt"),
+        encoder=encoder,
+        decoder=decoder,
+        joiner=joiner,
+        tokens=tokens,
         num_threads=8,
     )
 
-    assert seen["zipformer"]["joiner"] == "j.onnx"
+    assert seen["zipformer"]["joiner"] == str(joiner)
     assert seen["zipformer"]["num_threads"] == 8
 
 
@@ -244,3 +257,22 @@ def test_unknown_engine_names_the_choices():
 
     with pytest.raises(ValueError, match="zipformer"):
         build_recognizer("whisper", tokens=Path("t.txt"))
+
+
+def test_missing_model_file_is_named(tmp_path):
+    """onnxruntime은 "Invalid fd was supplied: -1" 만 뱉는다.
+
+    어느 파일이 없는지 말해주지 않아서, 압축이 덜 풀린 걸 알아채기 어려웠다.
+    """
+    from voice_ai.transcribe import build_recognizer
+
+    tokens = tmp_path / "tokens.txt"
+    tokens.write_text("a 0\n", encoding="utf-8")
+
+    with pytest.raises(FileNotFoundError, match="encoder_model.ort"):
+        build_recognizer(
+            "moonshine",
+            encoder=tmp_path / "encoder_model.ort",
+            decoder=tmp_path / "decoder_model_merged.ort",
+            tokens=tokens,
+        )

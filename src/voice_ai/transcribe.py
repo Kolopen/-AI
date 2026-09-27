@@ -101,7 +101,27 @@ def build_recognizer(
     맡기게 되는데, 한국어 진료 녹음이 통째로 중국어·광둥어로 인식된 적이 있다.
     zipformer-korean과 moonshine-tiny-ko는 한국어 전용이라 그 인자가 없다.
     """
+    if engine not in ENGINE_FILES:
+        raise ValueError(
+            f"모르는 엔진입니다: {engine}. {', '.join(ENGINE_FILES)} 중에 고르세요."
+        )
+
     import sherpa_onnx
+
+    given = {"model": model, "encoder": encoder, "decoder": decoder,
+             "joiner": joiner, "tokens": tokens}
+    # 없는 파일을 넘기면 onnxruntime이 "Invalid fd was supplied: -1" 로 죽는다.
+    # 어느 파일인지 알려주지 않아서, 압축이 덜 풀린 것을 알아채는 데 오래 걸린다.
+    missing = [
+        str(path)
+        for name, path in given.items()
+        if name in ENGINE_FILES[engine] and path is not None and not Path(path).is_file()
+    ]
+    if missing:
+        raise FileNotFoundError(
+            "모델 파일이 없습니다: " + ", ".join(missing) +
+            "\n압축이 덜 풀렸을 수 있습니다. tar -tf 로 목록을 먼저 확인하세요."
+        )
 
     if engine == "sensevoice":
         return sherpa_onnx.OfflineRecognizer.from_sense_voice(
@@ -126,7 +146,7 @@ def build_recognizer(
             tokens=str(tokens),
             num_threads=num_threads,
         )
-    raise ValueError(f"모르는 엔진입니다: {engine}. {', '.join(ENGINE_FILES)} 중에 고르세요.")
+    raise AssertionError(f"엔진 분기가 빠졌습니다: {engine}")  # pragma: no cover
 
 
 def diarize(
