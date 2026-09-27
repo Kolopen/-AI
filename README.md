@@ -141,6 +141,18 @@ SenseVoice는 MIT 라이선스이고 비자기회귀 구조라 Whisper Large보�
 | `moonshine` | `sherpa-onnx-moonshine-tiny-ko-quantized-2026-02-27` | 한국어 전용, 인코더·디코더 |
 | `zipformer` | `sherpa-onnx-zipformer-korean-2024-06-24` | 한국어 전용, transducer |
 
+압축을 풀면 나오는 파일 이름은 엔진마다 다르다. 받고 나서 `ls`로 확인하는
+편이 확실하지만, 기준은 이렇다.
+
+```
+moonshine   encoder_model.ort            decoder_model_merged.ort      tokens.txt
+              └ .onnx 가 아니라 .ort 다
+
+zipformer   encoder-epoch-99-avg-1.int8.onnx
+            decoder-epoch-99-avg-1.onnx        ← 디코더만 int8 이 아니다
+            joiner-epoch-99-avg-1.int8.onnx    tokens.txt
+```
+
 뒤의 둘은 디코더가 자기회귀라 앞말을 보고 다음 말을 고른다. 문장을 잇는 데는
 이쪽이 유리하다. 대신 비자기회귀보다 느리다. 어느 쪽이 나은지는 같은 녹음으로
 직접 재봐야 한다.
