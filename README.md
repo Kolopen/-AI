@@ -80,6 +80,7 @@ Q&A 매칭이 추론이 아니라 대조가 되고, 매니저가 빠뜨린 질�
 | `src/voice_ai/analyze.py` | 전사 하나를 끝까지 돌리는 진입점 (CLI) |
 | `src/voice_ai/sensevoice.py` | SenseVoice 출력 정규화 (태그 제거, 언어 불일치 경고) |
 | `src/voice_ai/diarization.py` | 별도 화자분리(pyannote 등) 결과를 전사와 타임스탬프로 정렬 |
+| `src/voice_ai/report.py` | 의사 발언에서 리포트 초안 발췌 (생성 아님) |
 | `src/voice_ai/qa.py` | 질문-답변 페어링, 사전질문 대조 |
 | `src/voice_ai/models.py` | 공유 데이터 모델과 출력 계약 |
 

@@ -16,16 +16,19 @@ from . import clovanote, sensevoice
 from .clova import group_by_speaker
 from .models import AnalysisResult, Method, Role, SpeakerRole, Utterance
 from .qa import pair_qa
+from .report import build_report_draft
 from .roles import classify, sentence_role, split_sentences
 from .terms import find_corrections
 
 # 앵커 녹음에서 실제로 쓰인 말들. 진료과별로 넓혀야 한다.
-STARTER_TERMS = frozenset(
-    {
-        "간보호제", "고지혈증", "콜레스테롤", "지방간", "내장지방",
-        "항생제", "혈압약", "빈혈", "소변검사", "피검사",
-    }
-)
+# 약품과 질환·검사를 나눠 둔다. 섞으면 리포트의 약품란에 병명이 들어간다.
+DRUG_TERMS = frozenset({"간보호제", "항생제", "혈압약", "소염제", "진통제"})
+
+CONDITION_TERMS = frozenset({"고지혈증", "지방간", "내장지방", "빈혈", "염증"})
+
+TEST_TERMS = frozenset({"콜레스테롤", "소변검사", "피검사", "간수치", "혈당", "신장"})
+
+STARTER_TERMS = DRUG_TERMS | CONDITION_TERMS | TEST_TERMS
 
 
 def _split_into_sentences(utterances: list[Utterance]) -> list[Utterance]:
@@ -75,7 +78,8 @@ def analyze_without_speakers(
         for role, scores in confidence_by_role.items()
     ]
 
-    pairs, unasked = pair_qa(labelled, {r.speaker_tag: r.role for r in speakers})
+    roles = {r.speaker_tag: r.role for r in speakers}
+    pairs, unasked = pair_qa(labelled, roles)
     unknown = len(confidence_by_role.get(Role.UNKNOWN, []))
     warnings = []
     if unknown:
@@ -85,17 +89,27 @@ def analyze_without_speakers(
         )
 
     return AnalysisResult(
-        speakers=speakers, qa_pairs=pairs, unasked_question_ids=unasked, warnings=warnings
+        speakers=speakers,
+        qa_pairs=pairs,
+        unasked_question_ids=unasked,
+        report_draft=build_report_draft(labelled, roles, drug_terms=DRUG_TERMS),
+        warnings=warnings,
     )
 
 
-def analyze_with_speakers(utterances: list[Utterance]) -> AnalysisResult:
+def analyze_with_speakers(
+    utterances: list[Utterance], *, medical_terms: frozenset[str] = frozenset()
+) -> AnalysisResult:
     """화자 라벨이 있는 전사. 화자 단위로 역할을 가른다."""
     speakers, warnings = classify(group_by_speaker(utterances))
     roles = {s.speaker_tag: s.role for s in speakers}
     pairs, unasked = pair_qa(utterances, roles)
     return AnalysisResult(
-        speakers=speakers, qa_pairs=pairs, unasked_question_ids=unasked, warnings=warnings
+        speakers=speakers,
+        qa_pairs=pairs,
+        unasked_question_ids=unasked,
+        report_draft=build_report_draft(utterances, roles, drug_terms=DRUG_TERMS),
+        warnings=warnings,
     )
 
 
@@ -121,7 +135,7 @@ def main(argv: list[str] | None = None) -> int:
 
     has_speakers = any(u.speaker_tag for u in utterances)
     result = (
-        analyze_with_speakers(utterances)
+        analyze_with_speakers(utterances, medical_terms=STARTER_TERMS)
         if has_speakers
         else analyze_without_speakers(utterances, medical_terms=STARTER_TERMS)
     )
@@ -133,6 +147,7 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps({
             "speakers": [asdict(s) for s in result.speakers],
             "qa_pairs": [asdict(p) for p in result.qa_pairs],
+            "report_draft": asdict(result.report_draft),
             "term_corrections": [asdict(c) for c in corrections],
             "warnings": result.warnings,
         }, ensure_ascii=False, indent=2, default=str))
@@ -147,6 +162,23 @@ def main(argv: list[str] | None = None) -> int:
     for pair in result.qa_pairs:
         print(f"  [{pair.question_at_ms // 1000}초] ({pair.asked_by.value}) {pair.question}")
         print(f"        -> {pair.answer[:80]}")
+
+    draft = result.report_draft
+    sections = [
+        ("진료 내용", draft.treatment_notes),
+        ("약품", draft.medication_name),
+        ("복용 방법", draft.medication_schedule_note),
+        ("처방 기간", draft.medication_notes),
+        ("다음 방문", draft.next_visit_note),
+    ]
+    filled = [(label, body) for label, body in sections if body]
+    if filled:
+        print("\n리포트 초안")
+        for label, body in filled:
+            print(f"  [{label}]")
+            for line in body.splitlines():
+                print(f"    {line}")
+        print("  [요약] 매니저가 작성합니다.")
 
     if corrections:
         print(f"\n용어 교정 후보 ({len(corrections)}건)")
