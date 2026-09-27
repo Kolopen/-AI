@@ -44,8 +44,15 @@ def transcribe(
     vad_model: Path,
     num_threads: int = 4,
     min_silence_duration: float = 0.25,
+    max_speech_duration: float = 10.0,
 ) -> list[dict]:
-    """VAD로 자르고 구간마다 SenseVoice를 돌려 chunks를 만든다."""
+    """VAD로 자르고 구간마다 SenseVoice를 돌려 chunks를 만든다.
+
+    구간 길이가 역할 판정의 해상도를 정한다. SenseVoice 한국어 출력에는 문장 부호가
+    거의 붙지 않아 문장 단위로 쪼갤 수가 없고, VAD 구간이 곧 판정 단위가 된다.
+    진료 대화는 의사가 길게 말하는 중간에 환자가 짧게 끼어들어 자연스러운 침묵이
+    잘 생기지 않으므로, 길이 상한으로 강제로 끊어야 화자가 섞이지 않는다.
+    """
     import sherpa_onnx
 
     recognizer = sherpa_onnx.OfflineRecognizer.from_sense_voice(
@@ -58,6 +65,7 @@ def transcribe(
     config = sherpa_onnx.VadModelConfig()
     config.silero_vad.model = str(vad_model)
     config.silero_vad.min_silence_duration = min_silence_duration
+    config.silero_vad.max_speech_duration = max_speech_duration
     config.sample_rate = SAMPLE_RATE
     window = config.silero_vad.window_size
     vad = sherpa_onnx.VoiceActivityDetector(config, buffer_size_in_seconds=100)
@@ -86,8 +94,12 @@ def transcribe(
                     }
                 )
 
+    # accept_waveform은 정확히 window_size 만큼을 받는다. 마지막 자투리는 0으로 채운다.
     for offset in range(0, len(audio), window):
-        vad.accept_waveform(audio[offset : offset + window])
+        block = audio[offset : offset + window]
+        if len(block) < window:
+            block = np.pad(block, (0, window - len(block)))
+        vad.accept_waveform(block)
         drain()
 
     vad.flush()
@@ -103,6 +115,18 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--vad", type=Path, required=True, help="silero_vad.onnx")
     parser.add_argument("--out", type=Path, default=Path("chunks.json"))
     parser.add_argument("--threads", type=int, default=4)
+    parser.add_argument(
+        "--max-speech",
+        type=float,
+        default=10.0,
+        help="발화 구간 최대 길이(초). 짧을수록 화자가 덜 섞인다.",
+    )
+    parser.add_argument(
+        "--min-silence",
+        type=float,
+        default=0.25,
+        help="이만큼 조용하면 구간을 끊는다(초). 짧을수록 자주 끊는다.",
+    )
     args = parser.parse_args(argv)
 
     audio = load_audio(args.audio)
@@ -114,6 +138,8 @@ def main(argv: list[str] | None = None) -> int:
         tokens=args.tokens,
         vad_model=args.vad,
         num_threads=args.threads,
+        min_silence_duration=args.min_silence,
+        max_speech_duration=args.max_speech,
     )
 
     args.out.write_text(json.dumps(chunks, ensure_ascii=False, indent=2), encoding="utf-8")
