@@ -171,3 +171,76 @@ def test_diarization_uses_every_thread_it_was_given(monkeypatch):
 
     assert seen["OfflineSpeakerSegmentationModelConfig"]["num_threads"] == 6
     assert seen["SpeakerEmbeddingExtractorConfig"]["num_threads"] == 6
+
+
+def _fake_engines(seen: dict):
+    import types
+
+    module = types.ModuleType("sherpa_onnx")
+
+    class OfflineRecognizer:
+        @staticmethod
+        def from_sense_voice(**kwargs):
+            seen["sensevoice"] = kwargs
+
+        @staticmethod
+        def from_moonshine_v2(**kwargs):
+            seen["moonshine"] = kwargs
+
+        @staticmethod
+        def from_transducer(**kwargs):
+            seen["zipformer"] = kwargs
+
+    module.OfflineRecognizer = OfflineRecognizer
+    return module
+
+
+def test_only_sensevoice_gets_a_language(monkeypatch):
+    """SenseVoice는 다국어라 한국어를 못 박아야 한다.
+
+    비워 두면 한국어 진료 녹음이 통째로 중국어로 인식된 적이 있다. 한국어 전용
+    모델에는 그 인자가 아예 없으므로 넘기면 깨진다.
+    """
+    import sys
+
+    from voice_ai.transcribe import build_recognizer
+
+    seen: dict = {}
+    monkeypatch.setitem(sys.modules, "sherpa_onnx", _fake_engines(seen))
+
+    build_recognizer("sensevoice", model=Path("m.onnx"), tokens=Path("t.txt"))
+    build_recognizer(
+        "moonshine", encoder=Path("e.onnx"), decoder=Path("d.onnx"), tokens=Path("t.txt")
+    )
+
+    assert seen["sensevoice"]["language"] == "ko"
+    assert "language" not in seen["moonshine"]
+
+
+def test_zipformer_needs_the_joiner(monkeypatch):
+    """transducer는 encoder·decoder·joiner 셋이 한 벌이다."""
+    import sys
+
+    from voice_ai.transcribe import build_recognizer
+
+    seen: dict = {}
+    monkeypatch.setitem(sys.modules, "sherpa_onnx", _fake_engines(seen))
+
+    build_recognizer(
+        "zipformer",
+        encoder=Path("e.onnx"),
+        decoder=Path("d.onnx"),
+        joiner=Path("j.onnx"),
+        tokens=Path("t.txt"),
+        num_threads=8,
+    )
+
+    assert seen["zipformer"]["joiner"] == "j.onnx"
+    assert seen["zipformer"]["num_threads"] == 8
+
+
+def test_unknown_engine_names_the_choices():
+    from voice_ai.transcribe import build_recognizer
+
+    with pytest.raises(ValueError, match="zipformer"):
+        build_recognizer("whisper", tokens=Path("t.txt"))

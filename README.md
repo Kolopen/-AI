@@ -128,9 +128,26 @@ curl -L -O https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recon
 curl -L -O https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx
 ```
 
-SenseVoice를 쓰는 이유는 한국어를 지원하는 비스트리밍 모델이 사실상 이것뿐이기
-때문이다. FireRedASR과 Paraformer는 중국어, Zipformer는 영어 전용이다.
-MIT 라이선스이고 비자기회귀 구조라 Whisper Large보다 빠르다.
+SenseVoice는 MIT 라이선스이고 비자기회귀 구조라 Whisper Large보다 빠르다.
+다만 다국어 모델이라 한국어 문장을 매끄럽게 못 붙인다. 실제 녹음에서 숫자
+자체는 맞게 나왔는데("콜레스테롤이 200이 ... 216") 사이를 잇는 말이 무너졌다
+("정상인데" → "정는", "작년에는" → "작년는").
+
+한국어 전용 모델도 있다. `--engine`으로 바꿔 끼운다.
+
+| 엔진 | 모델 | 구조 |
+|---|---|---|
+| `sensevoice` | `sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17` | 다국어, 비자기회귀 |
+| `moonshine` | `sherpa-onnx-moonshine-tiny-ko-quantized-2026-02-27` | 한국어 전용, 인코더·디코더 |
+| `zipformer` | `sherpa-onnx-zipformer-korean-2024-06-24` | 한국어 전용, transducer |
+
+뒤의 둘은 디코더가 자기회귀라 앞말을 보고 다음 말을 고른다. 문장을 잇는 데는
+이쪽이 유리하다. 대신 비자기회귀보다 느리다. 어느 쪽이 나은지는 같은 녹음으로
+직접 재봐야 한다.
+
+한국어 ITN(`rule_fsts`)과 호모폰 교정(`hr_*`)은 sherpa-onnx에 있긴 하지만
+중국어 전용이다(`itn_zh_number.fst`뿐이고, 호모폰 교정기는 한자가 아니면
+건너뛴다). 한국어에는 쓸 수 없다.
 
 ## 실행
 

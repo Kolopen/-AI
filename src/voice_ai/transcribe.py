@@ -76,21 +76,57 @@ def _split_long(samples: np.ndarray, max_samples: int) -> list[tuple[int, np.nda
     return pieces
 
 
-def _sense_voice(model: Path, tokens: Path, num_threads: int, language: str):
-    """SenseVoice 인식기를 만든다.
+# 엔진별로 필요한 파일이 다르다. CLI 검증과 생성이 같은 표를 보게 한다.
+ENGINE_FILES = {
+    "sensevoice": ("model", "tokens"),
+    "moonshine": ("encoder", "decoder", "tokens"),
+    "zipformer": ("encoder", "decoder", "joiner", "tokens"),
+}
 
-    언어를 비워 두면 자동 감지에 맡기게 되는데, 한국어 진료 녹음이 통째로
-    중국어·광둥어로 인식되는 일이 실제로 있었다. 못 박아 두는 편이 안전하다.
+
+def build_recognizer(
+    engine: str,
+    *,
+    model: Path | None = None,
+    encoder: Path | None = None,
+    decoder: Path | None = None,
+    joiner: Path | None = None,
+    tokens: Path,
+    num_threads: int = 4,
+    language: str = "ko",
+):
+    """엔진에 맞는 인식기를 만든다.
+
+    SenseVoice는 다국어라 한국어를 못 박아야 한다. 언어를 비워 두면 자동 감지에
+    맡기게 되는데, 한국어 진료 녹음이 통째로 중국어·광둥어로 인식된 적이 있다.
+    zipformer-korean과 moonshine-tiny-ko는 한국어 전용이라 그 인자가 없다.
     """
     import sherpa_onnx
 
-    return sherpa_onnx.OfflineRecognizer.from_sense_voice(
-        model=str(model),
-        tokens=str(tokens),
-        num_threads=num_threads,
-        language=language,
-        use_itn=True,
-    )
+    if engine == "sensevoice":
+        return sherpa_onnx.OfflineRecognizer.from_sense_voice(
+            model=str(model),
+            tokens=str(tokens),
+            num_threads=num_threads,
+            language=language,
+            use_itn=True,
+        )
+    if engine == "moonshine":
+        return sherpa_onnx.OfflineRecognizer.from_moonshine_v2(
+            encoder=str(encoder),
+            decoder=str(decoder),
+            tokens=str(tokens),
+            num_threads=num_threads,
+        )
+    if engine == "zipformer":
+        return sherpa_onnx.OfflineRecognizer.from_transducer(
+            encoder=str(encoder),
+            decoder=str(decoder),
+            joiner=str(joiner),
+            tokens=str(tokens),
+            num_threads=num_threads,
+        )
+    raise ValueError(f"모르는 엔진입니다: {engine}. {', '.join(ENGINE_FILES)} 중에 고르세요.")
 
 
 def diarize(
@@ -141,15 +177,9 @@ def transcribe_turns(
     audio: np.ndarray,
     turns: list[tuple[str, int, int]],
     *,
-    model: Path,
-    tokens: Path,
-    num_threads: int = 4,
-    language: str = "ko",
+    recognizer,
 ) -> list[dict]:
     """화자분리가 잡아준 구간마다 전사한다. 구간이 곧 한 사람의 발언이다."""
-    import sherpa_onnx
-
-    recognizer = _sense_voice(model, tokens, num_threads, language)
 
     chunks: list[dict] = []
     for speaker, start_ms, end_ms in turns:
@@ -178,13 +208,10 @@ def transcribe_turns(
 def transcribe(
     audio: np.ndarray,
     *,
-    model: Path,
-    tokens: Path,
+    recognizer,
     vad_model: Path,
-    num_threads: int = 4,
     min_silence_duration: float = 0.25,
     max_speech_duration: float = 10.0,
-    language: str = "ko",
 ) -> list[dict]:
     """VAD로 자르고 구간마다 SenseVoice를 돌려 chunks를 만든다.
 
@@ -194,8 +221,6 @@ def transcribe(
     잘 생기지 않으므로, 길이 상한으로 강제로 끊어야 화자가 섞이지 않는다.
     """
     import sherpa_onnx
-
-    recognizer = _sense_voice(model, tokens, num_threads, language)
 
     config = sherpa_onnx.VadModelConfig()
     config.silero_vad.model = str(vad_model)
@@ -251,8 +276,17 @@ def transcribe(
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="녹음 파일을 SenseVoice로 전사한다.")
     parser.add_argument("audio", type=Path, help="녹음 파일 (m4a, wav, mp3 등)")
-    parser.add_argument("--model", type=Path, required=True, help="SenseVoice model.onnx")
-    parser.add_argument("--tokens", type=Path, required=True, help="SenseVoice tokens.txt")
+    parser.add_argument(
+        "--engine",
+        choices=sorted(ENGINE_FILES),
+        default="sensevoice",
+        help="전사 엔진. sensevoice는 다국어, moonshine과 zipformer는 한국어 전용 모델이 있다.",
+    )
+    parser.add_argument("--model", type=Path, help="sensevoice: model.onnx")
+    parser.add_argument("--encoder", type=Path, help="moonshine/zipformer: encoder")
+    parser.add_argument("--decoder", type=Path, help="moonshine/zipformer: decoder")
+    parser.add_argument("--joiner", type=Path, help="zipformer: joiner")
+    parser.add_argument("--tokens", type=Path, required=True, help="tokens.txt")
     parser.add_argument("--vad", type=Path, help="silero_vad.onnx (화자분리를 안 쓸 때)")
     parser.add_argument(
         "--segmentation", type=Path, help="화자분리 모델. 주면 VAD 대신 화자별로 끊는다."
@@ -290,6 +324,21 @@ def main(argv: list[str] | None = None) -> int:
     if args.segmentation and not args.embedding:
         parser.error("--segmentation을 쓰려면 --embedding도 필요합니다.")
 
+    missing = [f"--{name}" for name in ENGINE_FILES[args.engine] if getattr(args, name) is None]
+    if missing:
+        parser.error(f"--engine {args.engine} 에는 {', '.join(missing)} 이(가) 필요합니다.")
+
+    recognizer = build_recognizer(
+        args.engine,
+        model=args.model,
+        encoder=args.encoder,
+        decoder=args.decoder,
+        joiner=args.joiner,
+        tokens=args.tokens,
+        num_threads=args.threads,
+        language=args.language,
+    )
+
     audio = load_audio(args.audio)
     print(f"오디오 {len(audio) / SAMPLE_RATE:.1f}초를 읽었습니다.")
 
@@ -304,25 +353,15 @@ def main(argv: list[str] | None = None) -> int:
         )
         speakers = sorted({speaker for speaker, _, _ in turns})
         print(f"화자 {len(speakers)}명, 발언 {len(turns)}구간을 찾았습니다. 전사를 시작합니다.")
-        chunks = transcribe_turns(
-            audio,
-            turns,
-            model=args.model,
-            tokens=args.tokens,
-            num_threads=args.threads,
-            language=args.language,
-        )
+        chunks = transcribe_turns(audio, turns, recognizer=recognizer)
     else:
         print("전사를 시작합니다.")
         chunks = transcribe(
             audio,
-            model=args.model,
-            tokens=args.tokens,
+            recognizer=recognizer,
             vad_model=args.vad,
-            num_threads=args.threads,
             min_silence_duration=args.min_silence,
             max_speech_duration=args.max_speech,
-            language=args.language,
         )
 
     args.out.write_text(json.dumps(chunks, ensure_ascii=False, indent=2), encoding="utf-8")
