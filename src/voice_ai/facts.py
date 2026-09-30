@@ -19,6 +19,7 @@ from dataclasses import dataclass, field
 from .models import Role, Utterance
 from .roles import split_sentences
 from .terminology import Terminology
+from .schedule import mask_dates
 from .timeline import group_by_time, has_marker
 from .terms import TermCorrection, corrected_text, phonetic_similarity
 
@@ -149,7 +150,10 @@ def extract(
         if named:
             last_test, last_at = named, utterance.start_ms
 
-        numbers = _NUMBER.findall(utterance.text)
+        # 날짜와 시각의 숫자는 검사 수치가 아니다. "10월 20일에 오세요"가
+        # 10, 20 두 개의 수치로 잡히던 자리다.
+        spoken = mask_dates(utterance.text)
+        numbers = _NUMBER.findall(spoken)
         if not numbers:
             continue
         if not named and not (
@@ -165,10 +169,10 @@ def extract(
         # 시점 표현이 이 전사에 없으면 다른 엔진 것을 본다. 실제 녹음에서
         # SenseVoice 는 "정상"을 "정는"으로 흘렸는데 moonshine 은 "정산"으로
         # 들어 살릴 수 있었다. 어미는 무너져도 시점 단어는 대체로 남는다.
-        source, borrowed = utterance.text, False
+        source, borrowed = spoken, False
         if not has_marker(source) and alternate:
             nearby = " ".join(
-                other.text
+                mask_dates(other.text)
                 for other in alternate
                 if min(other.end_ms, utterance.end_ms) - max(other.start_ms, utterance.start_ms) > 0
             )

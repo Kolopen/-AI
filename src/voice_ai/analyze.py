@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import argparse
+import datetime as dt
 import json
 import re
 import sys
@@ -45,7 +46,10 @@ def _split_into_sentences(utterances: list[Utterance]) -> list[Utterance]:
 
 
 def analyze_without_speakers(
-    utterances: list[Utterance], *, terms: terminology.Terminology
+    utterances: list[Utterance],
+    *,
+    terms: terminology.Terminology,
+    consult_date: dt.date | None = None,
 ) -> AnalysisResult:
     """화자 라벨이 없는 전사. 문장별로 역할을 가른다."""
     sentences = _split_into_sentences(utterances)
@@ -89,7 +93,9 @@ def analyze_without_speakers(
         speakers=speakers,
         qa_pairs=pairs,
         unasked_question_ids=unasked,
-        report_draft=build_report_draft(labelled, roles, drug_terms=terms.drugs),
+        report_draft=build_report_draft(
+            labelled, roles, drug_terms=terms.drugs, consult_date=consult_date
+        ),
         warnings=warnings,
     )
 
@@ -164,6 +170,7 @@ def analyze_with_speakers(
     terms: terminology.Terminology,
     merge_non_doctor: bool = False,
     compare_with: list[Utterance] | None = None,
+    consult_date: dt.date | None = None,
 ) -> AnalysisResult:
     """화자 라벨이 있는 전사. 화자 단위로 역할을 가른다."""
     speakers, warnings = classify(
@@ -190,7 +197,9 @@ def analyze_with_speakers(
         speakers=speakers,
         qa_pairs=pairs,
         unasked_question_ids=unasked,
-        report_draft=build_report_draft(utterances, roles, drug_terms=terms.drugs),
+        report_draft=build_report_draft(
+            utterances, roles, drug_terms=terms.drugs, consult_date=consult_date
+        ),
         warnings=warnings,
     )
 
@@ -224,6 +233,12 @@ def main(argv: list[str] | None = None) -> int:
         help="비의사 화자를 한 사람으로 합쳐 판정한다. 화자분리가 한 사람을 여러 명으로 쪼갰을 때 쓴다.",
     )
     parser.add_argument(
+        "--date",
+        type=dt.date.fromisoformat,
+        default=dt.date.today(),
+        help="진료를 본 날 (YYYY-MM-DD). 의사가 말한 \"10월 20일\"의 연도를 이걸로 정한다.",
+    )
+    parser.add_argument(
         "--department",
         help=f"진료과 용어 사전. 있는 것: {', '.join(terminology.available())}",
     )
@@ -243,9 +258,10 @@ def main(argv: list[str] | None = None) -> int:
             terms=terms,
             merge_non_doctor=args.merge_non_doctor,
             compare_with=compare,
+            consult_date=args.date,
         )
         if has_speakers
-        else analyze_without_speakers(utterances, terms=terms)
+        else analyze_without_speakers(utterances, terms=terms, consult_date=args.date)
     )
     result.warnings = warnings + result.warnings
 
@@ -335,6 +351,8 @@ def main(argv: list[str] | None = None) -> int:
         ("처방 기간", draft.medication_notes),
         ("다음 방문", draft.next_visit_note),
     ]
+    if draft.next_visit_at:
+        sections.append(("후속 예약", f"{draft.next_visit_at}  (매니저 확인 후 예약)"))
     filled = [(label, body) for label, body in sections if body]
     if filled:
         print("\n리포트 초안")

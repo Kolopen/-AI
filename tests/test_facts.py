@@ -180,3 +180,25 @@ def test_the_quote_always_stays_from_our_own_transcript():
     theirs = [Utterance("D", 0, 9_000, "폴레스테롤이 200이 정산이 216이니까")]
 
     assert extract(ours, ROLES, TERMS, alternate=theirs).measurements[0].quote == ours[0].text
+
+
+def test_예약_날짜는_검사_수치가_아니다():
+    # "10월 20일 오전 10시"가 10, 20, 10 세 개의 수치로 잡히던 자리다.
+    found = extract(
+        [
+            Utterance("D", 0, 9_000, "간수치가 40이 정상인데 67이세요"),
+            Utterance("D", 60_000, 66_000, "10월 20일날 오전 10시에 오세요. 피검사 다시 하죠."),
+        ],
+        ROLES,
+        TERMS,
+    )
+
+    assert [(m.test, m.values) for m in found.measurements] == [("간수치", ["40", "67"])]
+
+
+def test_한_문장에_날짜와_수치가_같이_있어도_수치만_남는다():
+    found = extract(
+        [Utterance("D", 0, 9_000, "간수치 67이니까 10월 20일에 다시 봅시다")], ROLES, TERMS
+    )
+
+    assert [(m.test, m.values) for m in found.measurements] == [("간수치", ["67"])]

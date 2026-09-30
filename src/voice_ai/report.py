@@ -11,10 +11,12 @@
 
 from __future__ import annotations
 
+import datetime as dt
 import re
 
 from .models import ReportDraft, Role, Utterance
 from .roles import split_sentences
+from .schedule import find_next_visit, mask_dates
 
 # 검사 수치와 진단. 숫자가 있거나 의학 용어가 있는 의사 문장.
 _FINDING = re.compile(r"정상|수치|높|낮|검사|결과|소견|때문에|가능성")
@@ -52,11 +54,22 @@ def _doctor_sentences(
     ]
 
 
-def _collect(pairs: list[tuple[Utterance, str]], pattern: re.Pattern[str]) -> str:
+def _collect(
+    pairs: list[tuple[Utterance, str]],
+    pattern: re.Pattern[str],
+    *,
+    mask: bool = False,
+) -> str:
+    """패턴에 걸리는 의사 문장을 시각과 함께 모은다.
+
+    `mask` 를 켜면 날짜와 시각을 지우고 맞춘다. "10월 20일에 오세요"의 20일이
+    처방 기간으로 잡히던 자리다. 내보내는 문장은 언제나 원문 그대로다.
+    """
     seen: set[str] = set()
     lines: list[str] = []
     for utterance, sentence in pairs:
-        if not pattern.search(sentence) or sentence in seen:
+        target = mask_dates(sentence) if mask else sentence
+        if not pattern.search(target) or sentence in seen:
             continue
         seen.add(sentence)
         lines.append(f"{_stamp(utterance)} {sentence}")
@@ -68,27 +81,45 @@ def build_report_draft(
     roles: dict[str, Role],
     *,
     drug_terms: frozenset[str] = frozenset(),
+    consult_date: dt.date | None = None,
 ) -> ReportDraft:
     """의사 발언에서 리포트 항목별로 관련 문장을 발췌한다.
 
     약품란에는 약 이름만 넣는다. 질환명과 검사명이 섞이면 리포트가 못 쓰게 된다.
+
+    `consult_date`를 주면 "10월 20일날 오세요" 같은 문장에서 후속 예약 날짜를
+    값으로 뽑아 `next_visit_at`에 넣는다. 말한 날짜에는 연도가 없으므로
+    진료일이 있어야 연도를 정할 수 있다.
     """
     pairs = _doctor_sentences(utterances, roles)
 
     findings = [
-        (u, s) for u, s in pairs if _FINDING.search(s) and (_NUMBER.search(s) or "수치" in s)
+        (u, s)
+        for u, s in pairs
+        if _FINDING.search(s) and (_NUMBER.search(mask_dates(s)) or "수치" in s)
     ]
 
     # 전사는 "간 보호제", 사전은 "간보호제"처럼 띄어쓰기가 어긋나므로 공백을 지우고 맞춘다.
     spoken = re.sub(r"\s+", "", " ".join(sentence for _, sentence in pairs))
     names = sorted(term for term in drug_terms if re.sub(r"\s+", "", term) in spoken)
 
+    visit = (
+        find_next_visit(pairs, consult_date=consult_date) if consult_date is not None else None
+    )
+    next_visit_note = _collect(pairs, _NEXT_VISIT)
+    if visit is not None:
+        # 날짜를 뽑아낸 문장은 메모에도 반드시 남긴다. 매니저가 근거를 봐야 한다.
+        line = f"{_stamp(visit.utterance)} {visit.sentence}"
+        if line not in next_visit_note:
+            next_visit_note = f"{line}\n{next_visit_note}".rstrip()
+
     return ReportDraft(
         treatment_notes=_collect(findings, _FINDING),
         medication_name=", ".join(names),
-        medication_schedule_note=_collect(pairs, _SCHEDULE),
-        medication_notes=_collect(pairs, _DURATION),
-        next_visit_note=_collect(pairs, _NEXT_VISIT),
+        medication_schedule_note=_collect(pairs, _SCHEDULE, mask=True),
+        medication_notes=_collect(pairs, _DURATION, mask=True),
+        next_visit_note=next_visit_note,
+        next_visit_at=visit.iso if visit is not None else None,
         # 자연어 생성이 필요한 유일한 항목. 매니저가 확인하며 쓴다.
         summary="",
     )
