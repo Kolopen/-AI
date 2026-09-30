@@ -19,6 +19,7 @@ from dataclasses import dataclass, field
 from .models import Role, Utterance
 from .roles import split_sentences
 from .terminology import Terminology
+from .timeline import group_by_time, has_marker
 from .terms import TermCorrection, corrected_text, phonetic_similarity
 
 _NUMBER = re.compile(r"\d+")
@@ -74,10 +75,15 @@ CARRY_WINDOW_MS = 30_000
 class Measurement:
     test: str
     values: list[str]
+    # 시점별로 가른 것. {"정상": ["40"], "작년": ["76","34"], "이번": ["67","23"]}
+    # 나열만 해서는 좋아졌는지 나빠졌는지 읽을 수 없다.
+    by_time: dict[str, list[str]]
     quote: str
     start_ms: int
     # 검사 이름이 이 구간에 없어 앞에서 이어받았다. 사람이 확인해야 한다.
     inferred: bool = False
+    # 시점 표현을 다른 엔진 전사에서 빌렸다.
+    time_from_alternate: bool = False
 
 
 @dataclass
@@ -108,6 +114,7 @@ def extract(
     roles: dict[str, Role],
     terms: Terminology,
     corrections: list[TermCorrection] | None = None,
+    alternate: list[Utterance] | None = None,
 ) -> Facts:
     """검사 수치·진단·복용·생활 지도를 값으로 뽑는다.
 
@@ -155,9 +162,28 @@ def extract(
         if key in seen_tests:
             continue
         seen_tests.add(key)
+        # 시점 표현이 이 전사에 없으면 다른 엔진 것을 본다. 실제 녹음에서
+        # SenseVoice 는 "정상"을 "정는"으로 흘렸는데 moonshine 은 "정산"으로
+        # 들어 살릴 수 있었다. 어미는 무너져도 시점 단어는 대체로 남는다.
+        source, borrowed = utterance.text, False
+        if not has_marker(source) and alternate:
+            nearby = " ".join(
+                other.text
+                for other in alternate
+                if min(other.end_ms, utterance.end_ms) - max(other.start_ms, utterance.start_ms) > 0
+            )
+            if has_marker(nearby):
+                source, borrowed = nearby, True
+
         facts.measurements.append(
             Measurement(
-                test, numbers, utterance.text.strip(), utterance.start_ms, inferred=not named
+                test,
+                numbers,
+                group_by_time(source),
+                utterance.text.strip(),
+                utterance.start_ms,
+                inferred=not named,
+                time_from_alternate=borrowed,
             )
         )
         last_at = utterance.start_ms

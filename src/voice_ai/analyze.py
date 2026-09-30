@@ -235,13 +235,14 @@ def main(argv: list[str] | None = None) -> int:
         print("전사 내용이 비어 있습니다.", file=sys.stderr)
         return 1
 
+    compare = load(args.compare)[0] if args.compare else None
     has_speakers = any(u.speaker_tag for u in utterances)
     result = (
         analyze_with_speakers(
             utterances,
             terms=terms,
             merge_non_doctor=args.merge_non_doctor,
-            compare_with=load(args.compare)[0] if args.compare else None,
+            compare_with=compare,
         )
         if has_speakers
         else analyze_without_speakers(utterances, terms=terms)
@@ -251,7 +252,9 @@ def main(argv: list[str] | None = None) -> int:
     corrections = find_corrections(utterances, set(terms.all_terms))
 
     roles_by_tag = {sp.speaker_tag: sp.role for sp in result.speakers}
-    facts = extract_facts(utterances, roles_by_tag, terms, corrections)
+    facts = extract_facts(
+        utterances, roles_by_tag, terms, corrections, alternate=compare
+    )
 
     if args.json:
         # 매니저가 보는 것과 관리자가 보는 것을 나눠 담는다. 경고는 진료실에서
@@ -296,9 +299,16 @@ def main(argv: list[str] | None = None) -> int:
             print("  [검사 수치]")
             for m in facts.measurements:
                 stamp = f"{m.start_ms // 60000:02d}:{m.start_ms // 1000 % 60:02d}"
-                mark = "  (검사명 추정)" if m.inferred else ""
-                print(f"    {m.test:8} {', '.join(m.values)}{mark}")
-                print(f"    {'':8} └ [{stamp}] {apply_corrections(m.quote, corrections)}")
+                marks = []
+                if m.inferred:
+                    marks.append("검사명 추정")
+                if m.time_from_alternate:
+                    marks.append("시점은 다른 엔진")
+                suffix = f"  ({', '.join(marks)})" if marks else ""
+                print(f"    {m.test}{suffix}")
+                for when, values in m.by_time.items():
+                    print(f"    {'':4} {when:6} {' / '.join(values)}")
+                print(f"    {'':4} └ [{stamp}] {apply_corrections(m.quote, corrections)}")
         if facts.diagnoses:
             print("  [진단·소견]")
             print(f"    {', '.join(name for name, _ in facts.diagnoses)}")

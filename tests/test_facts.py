@@ -144,3 +144,39 @@ def test_a_misheard_drug_is_recognised_after_correction():
     corrections = find_corrections(utterances, set(TERMS.all_terms))
 
     assert extract(utterances, ROLES, TERMS, corrections).drugs == ["간보호제"]
+
+
+def test_measurements_carry_their_periods():
+    found = extract(
+        [
+            Utterance("D", 0, 9_000, "간 수치가 좀 높죠 40이 정상이신데"),
+            Utterance("D", 9_000, 17_000, "작년에는 76에 34였고 이번에는 67에 23이에요"),
+        ],
+        ROLES,
+        TERMS,
+    )
+
+    carried = [m for m in found.measurements if m.inferred][0]
+    assert carried.by_time == {"작년": ["76", "34"], "이번": ["67", "23"]}
+
+
+def test_the_other_engine_supplies_a_period_word_this_one_lost():
+    """SenseVoice 가 "정상"을 "정는"으로 흘렸고 moonshine 은 "정산"으로 들었다."""
+    ours = [Utterance("D", 0, 9_000, "콜레스테롤이 200이 정는 216 이니까")]
+    theirs = [Utterance("D", 0, 9_000, "폴레스테롤이 200이 정산이 216이니까")]
+
+    alone = extract(ours, ROLES, TERMS).measurements[0]
+    assert alone.by_time == {"시점없음": ["200", "216"]}
+    assert alone.time_from_alternate is False
+
+    borrowed = extract(ours, ROLES, TERMS, alternate=theirs).measurements[0]
+    assert borrowed.by_time == {"정상": ["200"], "시점없음": ["216"]}
+    assert borrowed.time_from_alternate is True
+
+
+def test_the_quote_always_stays_from_our_own_transcript():
+    """시점만 빌린다. 근거 문장까지 남의 것을 보여주면 검증이 어긋난다."""
+    ours = [Utterance("D", 0, 9_000, "콜레스테롤이 200이 정는 216 이니까")]
+    theirs = [Utterance("D", 0, 9_000, "폴레스테롤이 200이 정산이 216이니까")]
+
+    assert extract(ours, ROLES, TERMS, alternate=theirs).measurements[0].quote == ours[0].text
