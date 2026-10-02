@@ -14,6 +14,8 @@ import json
 import re
 from pathlib import Path
 
+from types import SimpleNamespace
+
 import numpy as np
 
 SAMPLE_RATE = 16000
@@ -98,11 +100,16 @@ def _split_long(samples: np.ndarray, max_samples: int) -> list[tuple[int, np.nda
 
 # 엔진별로 필요한 파일이 다르다. CLI 검증과 생성이 같은 표를 보게 한다.
 ENGINE_FILES = {
+    "faster-whisper": ("model",),
     "sensevoice": ("model", "tokens"),
     "moonshine": ("encoder", "decoder", "tokens"),
     "whisper": ("encoder", "decoder", "tokens"),
     "zipformer": ("encoder", "decoder", "joiner", "tokens"),
 }
+
+# faster-whisper 의 --model 은 파일이 아니라 폴더이거나 HuggingFace 이름이다.
+# 있는지 미리 확인할 수 없으므로 파일 검사에서 뺀다.
+PATHLESS_ENGINES = frozenset({"faster-whisper"})
 
 # 구간이 이보다 길면 조용한 자리에서 끊는다. whisper 는 30초 창으로 돌아가서
 # 그보다 짧게 끊으면 남는 자리를 묵음으로 채우고도 같은 시간을 쓴다. 10초로
@@ -115,6 +122,63 @@ def default_max_chunk(engine: str) -> float:
     return DEFAULT_MAX_CHUNK.get(engine, FALLBACK_MAX_CHUNK)
 
 
+class _Stream:
+    """sherpa-onnx 스트림과 같은 모양. 오디오를 받아 두었다가 한 번에 돌린다."""
+
+    def __init__(self) -> None:
+        self.audio: np.ndarray | None = None
+        self.result = SimpleNamespace(text="")
+
+    def accept_waveform(self, sample_rate: int, audio) -> None:
+        self.audio = np.asarray(audio, dtype=np.float32)
+
+
+class FasterWhisper:
+    """faster-whisper 를 sherpa-onnx 인식기와 같은 모양으로 감싼다.
+
+    CTranslate2 형식이라 HuggingFace 의 한국어 파인튜닝 모델을 변환 없이 바로
+    불러온다. ONNX 로 바꾸는 과정이 통째로 없어진다.
+
+    `hotwords` 로 진료과 용어를 디코더에 미리 알려줄 수 있다. 실제 녹음에서
+    세 엔진이 모두 "치매"를 못 받아 적었는데, 사후 교정으로는 못 살리는
+    자리였다. 오인식이 일어나기 전에 막는 쪽이 맞다.
+    """
+
+    def __init__(
+        self,
+        model: str,
+        *,
+        language: str = "ko",
+        num_threads: int = 4,
+        hotwords: str | None = None,
+    ) -> None:
+        from faster_whisper import WhisperModel
+
+        self.model = WhisperModel(
+            model, device="cpu", compute_type="int8", cpu_threads=num_threads
+        )
+        self.language = language
+        self.hotwords = hotwords
+
+    def create_stream(self) -> _Stream:
+        return _Stream()
+
+    def decode_stream(self, stream: _Stream) -> None:
+        segments, _ = self.model.transcribe(
+            stream.audio,
+            language=self.language,
+            hotwords=self.hotwords,
+            beam_size=5,
+            # 구간을 따로따로 먹이므로 앞 구간에 기대면 안 된다. 켜 두면 같은
+            # 말을 끝없이 되풀이하는 구멍에 빠진다. moonshine 이 "그렇죠?"를
+            # 일곱 번 쓴 것이 그 모양이었다.
+            condition_on_previous_text=False,
+            # 화자분리로 이미 구간을 끊었다.
+            vad_filter=False,
+        )
+        stream.result.text = " ".join(s.text.strip() for s in segments).strip()
+
+
 def build_recognizer(
     engine: str,
     *,
@@ -125,6 +189,7 @@ def build_recognizer(
     tokens: Path,
     num_threads: int = 4,
     language: str = "ko",
+    hotwords: str | None = None,
 ):
     """엔진에 맞는 인식기를 만든다.
 
@@ -147,7 +212,10 @@ def build_recognizer(
     missing = [
         str(path)
         for name, path in given.items()
-        if name in ENGINE_FILES[engine] and path is not None and not Path(path).is_file()
+        if engine not in PATHLESS_ENGINES
+        and name in ENGINE_FILES[engine]
+        and path is not None
+        and not Path(path).is_file()
     ]
     if missing:
         raise FileNotFoundError(
@@ -155,6 +223,10 @@ def build_recognizer(
             "\n압축이 덜 풀렸을 수 있습니다. tar -tf 로 목록을 먼저 확인하세요."
         )
 
+    if engine == "faster-whisper":
+        return FasterWhisper(
+            str(model), language=language, num_threads=num_threads, hotwords=hotwords
+        )
     if engine == "sensevoice":
         return sherpa_onnx.OfflineRecognizer.from_sense_voice(
             model=str(model),
@@ -348,6 +420,33 @@ def transcribe(
     return chunks
 
 
+# 디코더 프롬프트에 들어갈 수 있는 길이가 정해져 있다(whisper 는 448 토큰이고
+# faster-whisper 가 그 절반까지만 쓴다). 넘치면 뒤에서부터 잘려 나가므로
+# 중요한 것을 앞에 둔다. 질환과 검사가 먼저다. 리포트의 진단란에 들어가는
+# 말이고, 틀리면 없는 병이 기록에 남는다. 약 이름은 사후 교정으로도 어느
+# 정도 잡힌다.
+HOTWORD_ORDER = ("conditions", "tests", "drugs")
+
+# 한국어 한 낱말이 토큰 두세 개를 먹으므로 이 언저리가 상한이다. 정확한
+# 토큰 수는 모델마다 다르고, 넘친 만큼은 faster-whisper 가 알아서 자른다.
+HOTWORD_LIMIT = 60
+
+
+def build_hotwords(department: str, *, limit: int = HOTWORD_LIMIT) -> list[str]:
+    """진료과 사전에서 디코더에 미리 알려줄 말을 고른다.
+
+    자를 수밖에 없으므로 무엇이 잘렸는지 부르는 쪽이 알 수 있게 목록으로
+    돌려준다. 조용히 사라지면 왜 안 걸리는지 알 길이 없다.
+    """
+    from . import terminology
+
+    terms = terminology.load(department)
+    words: list[str] = []
+    for group in HOTWORD_ORDER:
+        words.extend(sorted(getattr(terms, group)))
+    return words[:limit]
+
+
 def _mark_manager(
     audio: np.ndarray,
     turns: list[tuple[str, int, int]],
@@ -385,7 +484,9 @@ def main(argv: list[str] | None = None) -> int:
         default="sensevoice",
         help="전사 엔진. sensevoice는 다국어, moonshine과 zipformer는 한국어 전용 모델이 있다.",
     )
-    parser.add_argument("--model", type=Path, help="sensevoice: model.onnx")
+    parser.add_argument(
+        "--model", type=Path, help="sensevoice: model.onnx / faster-whisper: 폴더 또는 HF 이름"
+    )
     parser.add_argument("--encoder", type=Path, help="moonshine/whisper/zipformer: encoder")
     parser.add_argument("--decoder", type=Path, help="moonshine/whisper/zipformer: decoder")
     parser.add_argument("--joiner", type=Path, help="zipformer: joiner")
@@ -395,6 +496,14 @@ def main(argv: list[str] | None = None) -> int:
         "--segmentation", type=Path, help="화자분리 모델. 주면 VAD 대신 화자별로 끊는다."
     )
     parser.add_argument("--embedding", type=Path, help="화자 임베딩 모델")
+    parser.add_argument(
+        "--department",
+        help="faster-whisper 전용. 그 진료과 용어를 디코더에 미리 알려준다(hotwords).",
+    )
+    parser.add_argument(
+        "--hotwords",
+        help="디코더에 미리 알려줄 말. 쉼표로 나눈다. --department 대신 직접 주고 싶을 때.",
+    )
     parser.add_argument(
         "--manager",
         type=Path,
@@ -444,6 +553,14 @@ def main(argv: list[str] | None = None) -> int:
     if missing:
         parser.error(f"--engine {args.engine} 에는 {', '.join(missing)} 이(가) 필요합니다.")
 
+    hotwords = args.hotwords
+    if hotwords is None and args.department:
+        chosen = build_hotwords(args.department)
+        hotwords = ", ".join(chosen)
+        print(f"{args.department} 용어 {len(chosen)}개를 디코더에 알려줍니다.")
+    if hotwords and args.engine not in PATHLESS_ENGINES:
+        print(f"--hotwords 는 {args.engine} 에서는 무시됩니다.", file=sys.stderr)
+
     recognizer = build_recognizer(
         args.engine,
         model=args.model,
@@ -453,6 +570,7 @@ def main(argv: list[str] | None = None) -> int:
         tokens=args.tokens,
         num_threads=args.threads,
         language=args.language,
+        hotwords=hotwords,
     )
 
     audio = load_audio(args.audio)

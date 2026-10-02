@@ -382,3 +382,21 @@ def test_whisper_gets_a_longer_chunk_by_default():
 
     assert default_max_chunk("whisper") == 30.0
     assert default_max_chunk("sensevoice") == 10.0
+
+
+def test_hotwords_put_conditions_first():
+    # 프롬프트 길이가 정해져 있어 뒤에서부터 잘린다. 리포트의 진단란에
+    # 들어가는 말이 먼저 살아남아야 한다.
+    from voice_ai.transcribe import build_hotwords
+
+    words = build_hotwords("신경과")
+
+    assert "치매" in words
+    assert words.index("치매") < words.index("MRI")
+
+
+def test_hotwords_are_capped():
+    from voice_ai.transcribe import HOTWORD_LIMIT, build_hotwords
+
+    assert len(build_hotwords("신경과")) == HOTWORD_LIMIT
+    assert len(build_hotwords("신경과", limit=5)) == 5

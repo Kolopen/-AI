@@ -160,6 +160,7 @@ SenseVoice는 MIT 라이선스이고 비자기회귀 구조라 Whisper Large보�
 | `moonshine` | `sherpa-onnx-moonshine-tiny-ko-quantized-2026-02-27` | 한국어 전용, 인코더·디코더 |
 | `zipformer` | `sherpa-onnx-zipformer-korean-2024-06-24` | 한국어 전용, transducer |
 | `whisper` | `sherpa-onnx-whisper-turbo` 등 | 다국어, 인코더·디코더 |
+| `faster-whisper` | HuggingFace 의 CTranslate2 모델 | 한국어 파인튜닝을 바로 끼움 |
 
 압축을 풀면 나오는 파일 이름은 엔진마다 다르다. 받고 나서 `ls`로 확인하는
 편이 확실하지만, 기준은 이렇다.
@@ -246,6 +247,43 @@ sensevoice 는 10초가 맞아서 같은 값을 주면 한쪽이 손해를 본�
 그 규칙을 풀면 "보고요"가 "복통"이 되는 쪽이 열린다. 없는 증상이 리포트에
 실리는 편이 치매를 한 번 놓치는 것보다 나쁘다. 남은 길은 키워드 부스팅인데,
 sherpa-onnx 는 transducer 에만 지원하므로 whisper 에는 쓸 수 없다.
+
+### 한국어 파인튜닝 모델과 용어 알려주기
+
+`faster-whisper` 는 CTranslate2 형식이라 HuggingFace 의 한국어 파인튜닝
+whisper 를 **변환 없이 바로** 불러온다. ONNX 로 바꾸는 과정이 통째로 없다.
+
+```bash
+pip install -e ".[faster]"
+
+voice-transcribe 진료녹음.m4a \
+  --engine faster-whisper \
+  --model <HuggingFace 이름 또는 받아둔 폴더> \
+  --department 신경과 \
+  --segmentation sherpa-onnx-pyannote-segmentation-3-0/model.onnx \
+  --embedding 3dspeaker_speech_eres2net_base_sv_zh-cn_3dspeaker_16k.onnx \
+  --speakers 3 --out whisper.json
+```
+
+파인튜닝이 얼마나 버는지는 리턴제로가 AI-Hub 공개 테스트셋으로 재 둔
+숫자가 있다. 같은 Whisper 구조에서 **11.39% → 6.59%** 로, 오류가 42%
+줄었다. 우리가 "모델이 한국어를 못 알아듣는다"고 본 것이 이 차이다.
+
+**`--department` 를 주면 그 진료과 용어를 디코더에 미리 알려준다**(hotwords).
+사후 교정으로 못 살리는 자리를 오인식 전에 막는 쪽이다. 실제 녹음에서 세
+엔진이 모두 "치매"를 못 받아 적었고, 교정으로는 두 글자 규칙에 걸려 못
+고쳤다.
+
+프롬프트에 들어갈 수 있는 길이가 정해져 있어서 60개까지만 넣고, 질환·검사·
+약품 순으로 자른다. 질환과 검사가 리포트의 진단란에 들어가는 말이고, 틀리면
+없는 병이 기록에 남는다. 몇 개가 들어갔는지는 실행할 때 찍어 준다.
+
+모델을 고를 때 볼 것:
+
+- **학습 데이터와 라이선스.** AI-Hub 데이터로 학습했다면 이용 조건을 확인해야
+  한다. 승인 절차와 상업적 이용 조건이 데이터셋마다 다르다.
+- **base/small 말고 medium 이상.** 작은 모델은 파인튜닝해도 한계가 있다.
+- 모델 카드에 **무엇으로 얼마나** 학습했는지 적혀 있는 것.
 
 한국어 ITN(`rule_fsts`)과 호모폰 교정(`hr_*`)은 sherpa-onnx에 있긴 하지만
 중국어 전용이다(`itn_zh_number.fst`뿐이고, 호모폰 교정기는 한자가 아니면
