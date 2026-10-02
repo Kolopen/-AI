@@ -27,6 +27,17 @@ DOCTOR_SIGNALS: list[Signal] = [
     (re.compile(r"시면|시고|시니|시는|신데|시죠|시잖|셔야|셔서|셨|세요|십시오|으시"), 2.0),
 ]
 
+# 대리 질문 화법. 남이 물은 것을 옮겨 말하는 꼴이고, 의사는 환자에 대해
+# 이렇게 말하지 않는다. 매니저를 쓰는 이유가 바로 이 자리다.
+#
+# 점수로 겨루게 두면 진다. 매니저가 보호자 질문을 옮기면서 의학 용어를 같이
+# 말하기 때문이다("편두통과 관련된 건지 여쭤봐 달라고 하셨어요"). 실제
+# 녹음에서 의사 5.0 대 매니저 3.5 로 뒤집혀 대리 질문이 통째로 사라졌다.
+PROXY_QUESTION = re.compile(
+    r"여쭤|여쭙|여쭈|물어보셨|물어봐\s*달라|물어보라"
+    r"|궁금해\s*하셨|궁금하다고|알고\s*싶어\s*하셔|질문\s*(?:을\s*)?주셨|확인\s*부탁"
+)
+
 # 인사말에서는 환자도 상대를 높인다("추석 잘 보내시고요"). 주체 높임이 뒤집히는
 # 유일한 자리이고, 리포트에 담을 내용도 없으므로 아예 분류에서 뺀다.
 GREETING = re.compile(r"감사합니다|고맙습니다|안녕히|수고하세|잘 보내|다음에 또|들어가세요")
@@ -38,7 +49,9 @@ MANAGER_SIGNALS: list[Signal] = [
     (re.compile(r"대신 (여쭤|물어|말씀)|전달(드리|받)|확인 부탁"), 3.0),
     (re.compile(r"어머님|아버님|환자분|할머님|할아버님"), 2.0),
     (re.compile(r"메모|적어|기록|정리해서"), 2.0),
-    (re.compile(r"혹시|괜찮으실까요|가능할까요|될까요"), 1.0),
+    # "혹시"는 뺀다. 누구나 쓰는 말인데 이것만으로 매니저가 되어, 의사의
+    # "혹시 있었나요?"가 매니저 질문으로 잡히고 엉뚱한 답변이 붙었다.
+    (re.compile(r"괜찮으실까요|가능할까요|될까요"), 1.0),
     (re.compile(r"다음 진료|예약|언제 (다시|오면)|접수"), 1.0),
 ]
 
@@ -193,9 +206,12 @@ def sentence_role(
     그런 문장은 UNKNOWN으로 두는데, 리포트에 담을 내용이 없으므로 손해가 아니다.
 
     인사말은 주체 높임이 뒤집히는 자리라 아예 판정하지 않는다.
+    대리 질문 화법은 점수를 겨루지 않고 바로 매니저로 본다.
     """
     if GREETING.search(sentence):
         return Role.UNKNOWN, 0.0
+    if PROXY_QUESTION.search(sentence):
+        return Role.MANAGER, 0.9
 
     doctor = sum(w * len(p.findall(sentence)) for p, w in SIGNALS[Role.DOCTOR])
     doctor += MEDICAL_TERM_WEIGHT * sum(1 for term in medical_terms if term in sentence)

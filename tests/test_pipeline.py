@@ -6,7 +6,7 @@ from voice_ai.analyze import _diarization_collapsed, analyze_without_speakers
 from voice_ai.clova import group_by_speaker, parse_segments
 from voice_ai.models import Role, SpeakerProfile, Utterance
 from voice_ai.qa import pair_qa
-from voice_ai.roles import classify, doctor_score
+from voice_ai.roles import classify, doctor_score, sentence_role
 
 FIXTURE = Path(__file__).parent / "fixtures" / "sample_clova.json"
 
@@ -239,3 +239,46 @@ def test_a_short_speaker_quoting_the_doctor_does_not_outscore_the_doctor():
     )
 
     assert doctor_score(doctor) > doctor_score(manager)
+
+
+def _conversation(*rows) -> tuple[list[Utterance], dict[str, Role]]:
+    utterances = [
+        Utterance(tag, i * 10_000, i * 10_000 + 9_000, text)
+        for i, (tag, text) in enumerate(rows)
+    ]
+    return utterances, {"D": Role.DOCTOR, "M": Role.MANAGER, "P": Role.PATIENT}
+
+
+def test_proxy_questions_are_questions_without_a_question_mark():
+    # 대리 질문은 평서문으로 온다. 리포트에 가장 필요한 질문인데 물음표가 없다.
+    utterances, roles = _conversation(
+        ("M", "보호자분이 MRI와 뇌파 검사가 같은 검사인지도 물어보셨어요."),
+        ("D", "서로 다른 검사입니다. 뇌파 검사는 이번에 시행하지 않았습니다."),
+    )
+    pairs, _ = pair_qa(utterances, roles)
+
+    assert len(pairs) == 1
+    assert pairs[0].asked_by is Role.MANAGER
+    assert "뇌파 검사는 이번에 시행하지 않았습니다" in pairs[0].answer
+
+
+def test_a_proxy_question_full_of_medical_words_is_still_the_manager():
+    # 매니저가 보호자 질문을 옮기면서 의학 용어를 같이 말한다. 점수로 겨루면
+    # 의사가 이겨서 대리 질문이 통째로 사라졌다.
+    role, _ = sentence_role(
+        "지난번에 말씀하신 편두통과 관련된 건지 여쭤봐 달라고 하셨어요.",
+        medical_terms=frozenset({"편두통", "두통"}),
+    )
+
+    assert role is Role.MANAGER
+
+
+def test_a_statement_ending_in_나요_is_not_a_question():
+    # "기억이 잘 안 나요"가 "-나요" 질문으로 잡혀 엉뚱한 답변이 붙었다.
+    utterances, roles = _conversation(
+        ("P", "저는 기억이 잘 안 나요."),
+        ("D", "횟수는 정확하지 않은 것으로 기록하겠습니다?"),
+    )
+    pairs, _ = pair_qa(utterances, roles)
+
+    assert pairs == []

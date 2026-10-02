@@ -9,10 +9,13 @@ from __future__ import annotations
 import re
 
 from .models import QAPair, Role, Utterance
-from .roles import QUESTION_PATTERN
+from .roles import PROXY_QUESTION, QUESTION_PATTERN
 
 # 답변으로 인정할 최대 간격. 이보다 멀면 다른 화제로 넘어간 것으로 본다.
 ANSWER_WINDOW_MS = 60_000
+
+_QUESTION_MARK = re.compile(r"\?")
+
 
 _NON_WORD = re.compile(r"[^가-힣A-Za-z0-9]")
 _MATCH_THRESHOLD = 0.5
@@ -60,11 +63,22 @@ def pair_qa(
     pairs: list[QAPair] = []
     seq = 0
 
+    # 물음표를 내놓는 전사라면 물음표만 믿는다. 어미로만 가르면 "기억이 잘 안
+    # 나요" 가 "-나요" 질문으로 잡혀 엉뚱한 답변이 붙는다. SenseVoice 도
+    # moonshine 도 물음표를 찍으므로 대부분 이쪽으로 간다.
+    punctuated = any(_QUESTION_MARK.search(u.text) for u in utterances)
+    marker = _QUESTION_MARK if punctuated else QUESTION_PATTERN
+
+    def is_question(text: str) -> bool:
+        # 대리 질문은 평서문으로 온다. 물음표도 의문 어미도 없지만 보호자가
+        # 물은 것이고, 리포트에 가장 필요한 질문이기도 하다.
+        return bool(marker.search(text) or PROXY_QUESTION.search(text))
+
     for index, utterance in enumerate(utterances):
         asker = roles.get(utterance.speaker_tag, Role.UNKNOWN)
         if asker not in (Role.MANAGER, Role.PATIENT):
             continue
-        if not QUESTION_PATTERN.search(utterance.text):
+        if not is_question(utterance.text):
             continue
 
         answer_parts: list[Utterance] = []
