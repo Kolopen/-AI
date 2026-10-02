@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import sys
 from pathlib import Path
 
 from types import SimpleNamespace
@@ -633,6 +634,17 @@ def main(argv: list[str] | None = None) -> int:
         )
 
     args.out.write_text(json.dumps(chunks, ensure_ascii=False, indent=2), encoding="utf-8")
+    if not chunks:
+        # 빈 결과를 조용히 저장하면 다음 단계에서야 알게 된다. 전사가 통째로
+        # 실패한 것이므로 여기서 멈추고 무엇을 볼지 알려준다.
+        print(
+            f"전사가 한 구간도 내놓지 못했습니다. {args.out} 는 비어 있습니다.\n"
+            "  - 모델이 그 언어를 못 내놓는지: --language 를 확인하세요\n"
+            "  - 용어 알려주기가 방해하는지: --department 와 --hotwords 를 빼고 돌려보세요\n"
+            "  - 녹음 자체가 비었는지: ffprobe 로 길이와 샘플레이트를 보세요",
+            file=sys.stderr,
+        )
+        return 1
     print(f"발화 {len(chunks)}구간을 {args.out}에 저장했습니다.")
     print(f"다음: python3 -m voice_ai.analyze {args.out}")
     return 0
