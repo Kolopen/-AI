@@ -59,11 +59,16 @@ PATIENT_PRIOR = 0.5
 # 이보다 내용이 적고 어휘 신호가 없으면 텍스트만으로는 판정하지 않는다.
 LOW_SIGNAL_CHARS = 60
 
+# 밀도를 잴 때 쓰는 바닥 길이. 이보다 적게 말한 화자는 이만큼 말한 것으로 쳐서
+# 몇 마디에 어휘가 몰린 것만으로 1위가 되지 않게 한다.
+SHORT_SPEAKER_CHARS = 300
+
 # 이 아래 신뢰도는 운영자 검수 큐로 올린다. 검수 결과가 학습 데이터가 된다.
 REVIEW_THRESHOLD = 0.6
 
 # 이 점수에 못 미치면 의사가 녹음에 없거나 전사가 망가진 것으로 본다.
-DOCTOR_MIN_SCORE = 2.0
+# 100자당 점수다. 실제 녹음에서 의사는 4.6~9.3, 비의사 최고가 3.8 이었다.
+DOCTOR_MIN_SCORE = 3.0
 
 NURSE_SIGNALS: list[Signal] = [
     (re.compile(r"체온|혈압|재겠습니다|수납|접수|대기|성함|들어오세요"), 3.0),
@@ -140,9 +145,18 @@ def question_ratio(profile: SpeakerProfile) -> float:
 
 
 def lexical_score(profile: SpeakerProfile, role: Role) -> float:
+    """역할 신호의 밀도. 100자당 점수로 센다.
+
+    발화 개수로 나누면 화자분리가 잘게 쪼갤수록 점수가 떨어진다. 같은 의사가
+    실제 녹음에서 클로바로는 3.33, 우리 화자분리로는 1.45 를 받았다. 쪼개는
+    방식은 누가 말했는지와 아무 상관이 없으므로 점수가 흔들려서는 안 된다.
+
+    짧은 화자는 바닥을 둔다. 매니저가 "기형 검사", "치매", "확진" 처럼 의사
+    어휘를 옮겨 말하면 177자 안에서 밀도가 의사만큼 올라간다.
+    """
     text = _without_greetings(profile.text)
     raw = sum(weight * len(pattern.findall(text)) for pattern, weight in SIGNALS[role])
-    return raw / max(1, profile.utterance_count)
+    return raw / (max(len(profile.text), SHORT_SPEAKER_CHARS) / 100)
 
 
 def has_lexical_evidence(profile: SpeakerProfile) -> bool:
@@ -157,10 +171,6 @@ def score_speaker(profile: SpeakerProfile) -> dict[Role, float]:
     """
     scores = {role: lexical_score(profile, role) for role in EXCLUSIVE_ROLES}
     scores[Role.PATIENT] += PATIENT_PRIOR
-
-    # 의사는 설명이 길다.
-    if profile.mean_chars > 40:
-        scores[Role.DOCTOR] += 1.0
 
     # 대리 질문 화법이 이미 잡힌 화자에 한해 질문 비율로 힘을 실어준다.
     if scores[Role.MANAGER] > 0:
@@ -204,10 +214,7 @@ def sentence_role(
 
 
 def doctor_score(profile: SpeakerProfile) -> float:
-    score = lexical_score(profile, Role.DOCTOR)
-    if profile.mean_chars > 40:
-        score += 1.0
-    return score
+    return lexical_score(profile, Role.DOCTOR)
 
 
 def identify_doctor(profiles: list[SpeakerProfile]) -> tuple[str | None, float]:

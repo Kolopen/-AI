@@ -4,9 +4,9 @@ from pathlib import Path
 from voice_ai import terminology
 from voice_ai.analyze import _diarization_collapsed, analyze_without_speakers
 from voice_ai.clova import group_by_speaker, parse_segments
-from voice_ai.models import Role, Utterance
+from voice_ai.models import Role, SpeakerProfile, Utterance
 from voice_ai.qa import pair_qa
-from voice_ai.roles import classify
+from voice_ai.roles import classify, doctor_score
 
 FIXTURE = Path(__file__).parent / "fixtures" / "sample_clova.json"
 
@@ -202,3 +202,40 @@ def test_sentence_mode_hands_back_role_labelled_utterances():
 
     assert result.labelled
     assert Role.DOCTOR.value in {u.speaker_tag for u in result.labelled}
+
+
+def _doctor_said(count: int) -> str:
+    return "검사 결과를 보시면 수치가 높으시니까 약을 처방해 드릴게요. " * count
+
+
+def test_doctor_score_survives_fine_segmentation():
+    """같은 말을 잘게 쪼개도 의사 점수가 달라지면 안 된다.
+
+    실제 녹음에서 같은 의사가 클로바 분할로는 3.33, 우리 화자분리로는 1.45 를
+    받아 기준선 아래로 떨어졌고, 그 바람에 의사를 특정하지 못했다. 쪼개는
+    방식은 누가 말했는지와 아무 상관이 없다.
+    """
+    whole = _doctor_said(6)
+    coarse = SpeakerProfile("speaker_00", [Utterance("speaker_00", 0, 60_000, whole)])
+    pieces = [s.strip() + " " for s in whole.split(". ") if s.strip()]
+    fine = SpeakerProfile(
+        "speaker_00",
+        [
+            Utterance("speaker_00", i * 2_000, i * 2_000 + 1_900, piece)
+            for i, piece in enumerate(pieces)
+        ],
+    )
+
+    assert doctor_score(coarse) == doctor_score(fine)
+
+
+def test_a_short_speaker_quoting_the_doctor_does_not_outscore_the_doctor():
+    # 매니저가 "기형 검사", "치매", "확진"처럼 의사 어휘를 옮겨 말하면 짧은
+    # 발화 안에서 밀도가 의사만큼 올라간다. 바닥 길이가 이걸 막는다.
+    doctor = SpeakerProfile("speaker_00", [Utterance("speaker_00", 0, 60_000, _doctor_said(6))])
+    manager = SpeakerProfile(
+        "speaker_01",
+        [Utterance("speaker_01", 60_000, 64_000, "지난번 검사 결과가 어떠신지 여쭤보셨어요")],
+    )
+
+    assert doctor_score(doctor) > doctor_score(manager)
