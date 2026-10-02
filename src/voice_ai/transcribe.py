@@ -454,7 +454,7 @@ def transcribe(
 # 중요한 것을 앞에 둔다. 질환과 검사가 먼저다. 리포트의 진단란에 들어가는
 # 말이고, 틀리면 없는 병이 기록에 남는다. 약 이름은 사후 교정으로도 어느
 # 정도 잡힌다.
-HOTWORD_ORDER = ("conditions", "tests", "drugs")
+HOTWORD_SECTIONS = ("condition", "test", "drug")
 
 # 60개를 넣었더니 디코더가 아무것도 안 내놨다. 같은 구간이 용어 없이는
 # 멀쩡히 나왔으므로 프롬프트가 길어서 생긴 일이다. faster-whisper 는 넘친
@@ -468,15 +468,37 @@ HOTWORD_LIMIT = 12
 def build_hotwords(department: str, *, limit: int = HOTWORD_LIMIT) -> list[str]:
     """진료과 사전에서 디코더에 미리 알려줄 말을 고른다.
 
+    공통 사전은 넣지 않는다. "감기", "기침", "고열" 같은 말은 모델이 이미
+    잘 받아 적는다. 거들어야 할 것은 그 진료과에서만 쓰는 말이다.
+
+    가나다순으로 자르면 "가래, 간질, 감기..."만 남고 정작 "치매"가 빠진다.
+    사전 파일은 중요한 것부터 적혀 있으므로 그 순서를 그대로 쓴다. 무엇을
+    앞에 둘지는 사전을 쓰는 사람이 정하는 것이 맞다.
+
     자를 수밖에 없으므로 무엇이 잘렸는지 부르는 쪽이 알 수 있게 목록으로
     돌려준다. 조용히 사라지면 왜 안 걸리는지 알 길이 없다.
     """
-    from . import terminology
+    from .terminology import TERMS_DIR
 
-    terms = terminology.load(department)
+    path = TERMS_DIR / f"{department}.txt"
+    if not path.is_file():
+        raise FileNotFoundError(f"그런 진료과 사전이 없습니다: {path}")
+
+    sections: dict[str, list[str]] = {name: [] for name in HOTWORD_SECTIONS}
+    current: str | None = None
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("[") and line.endswith("]"):
+            current = line[1:-1]
+            continue
+        if current in sections:
+            sections[current].append(line)
+
     words: list[str] = []
-    for group in HOTWORD_ORDER:
-        words.extend(sorted(getattr(terms, group)))
+    for name in HOTWORD_SECTIONS:
+        words.extend(sections[name])
     return words[:limit]
 
 

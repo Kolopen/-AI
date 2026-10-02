@@ -384,15 +384,22 @@ def test_whisper_gets_a_longer_chunk_by_default():
     assert default_max_chunk("sensevoice") == 10.0
 
 
-def test_hotwords_put_conditions_first():
-    # 프롬프트 길이가 정해져 있어 뒤에서부터 잘린다. 리포트의 진단란에
-    # 들어가는 말이 먼저 살아남아야 한다.
+def test_hotwords_keep_the_dictionary_order():
+    # 가나다순으로 자르면 "가래, 간질, 감기..."만 남고 정작 "치매"가 빠진다.
+    # 사전 파일은 중요한 것부터 적혀 있으므로 그 순서를 그대로 쓴다.
     from voice_ai.transcribe import build_hotwords
 
     words = build_hotwords("신경과")
 
-    assert "치매" in words
-    assert words.index("치매") < words.index("MRI")
+    assert words[0] == "치매"
+
+
+def test_hotwords_leave_out_the_common_dictionary():
+    # "감기", "기침" 같은 말은 모델이 이미 잘 받아 적는다. 짧은 자리를
+    # 그런 말에 내주면 진료과 용어가 밀려난다.
+    from voice_ai.transcribe import build_hotwords
+
+    assert "감기" not in build_hotwords("신경과", limit=40)
 
 
 def test_hotwords_are_capped():
