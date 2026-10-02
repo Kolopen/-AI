@@ -456,9 +456,13 @@ def transcribe(
 # 정도 잡힌다.
 HOTWORD_ORDER = ("conditions", "tests", "drugs")
 
-# 한국어 한 낱말이 토큰 두세 개를 먹으므로 이 언저리가 상한이다. 정확한
-# 토큰 수는 모델마다 다르고, 넘친 만큼은 faster-whisper 가 알아서 자른다.
-HOTWORD_LIMIT = 60
+# 60개를 넣었더니 디코더가 아무것도 안 내놨다. 같은 구간이 용어 없이는
+# 멀쩡히 나왔으므로 프롬프트가 길어서 생긴 일이다. faster-whisper 는 넘친
+# 만큼을 자를 뿐 경고하지 않아서, 조용히 전사 전체가 빈 채로 끝났다.
+#
+# 용어를 알려주는 것은 거드는 장치다. 거들려다 본 일을 막으면 안 되므로
+# 짧게 간다. --hotwords 로 직접 주면 이 상한을 쓰지 않는다.
+HOTWORD_LIMIT = 12
 
 
 def build_hotwords(department: str, *, limit: int = HOTWORD_LIMIT) -> list[str]:
