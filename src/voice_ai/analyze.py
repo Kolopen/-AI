@@ -97,7 +97,29 @@ def analyze_without_speakers(
             labelled, roles, drug_terms=terms.drugs, consult_date=consult_date
         ),
         warnings=warnings,
+        labelled=labelled,
     )
+
+
+# 전체 글자 수에서 이 몫을 넘겨야 말한 화자로 센다. 길이로 끊지 않는 이유는
+# 녹음 길이가 제각각이어서다. 3분짜리의 50자와 30분짜리의 50자는 뜻이 다르다.
+MIN_SPEAKER_SHARE = 0.1
+
+
+def _diarization_collapsed(utterances: list[Utterance]) -> bool:
+    """화자분리가 사실상 한 명만 내놨는지 본다.
+
+    한 명뿐이면 화자 단위 판정은 그 한 명에게 역할 하나를 붙이고 끝난다.
+    모든 발화가 같은 역할을 받으므로 의사와 환자를 가르지 못한다. 실제
+    3인 녹음에서 둘째 화자가 22자뿐이었고, 그 화자는 판정 불가로 끝났다.
+    """
+    spoken: dict[str, int] = {}
+    for utterance in utterances:
+        spoken[utterance.speaker_tag] = spoken.get(utterance.speaker_tag, 0) + len(utterance.text)
+    total = sum(spoken.values())
+    if not total:
+        return True
+    return sum(1 for length in spoken.values() if length / total >= MIN_SPEAKER_SHARE) <= 1
 
 
 # 이보다 많은 비의사 화자가 판정 불가로 남으면 화자분리가 한 사람을 쪼갠 쪽을 의심한다.
@@ -201,6 +223,7 @@ def analyze_with_speakers(
             utterances, roles, drug_terms=terms.drugs, consult_date=consult_date
         ),
         warnings=warnings,
+        labelled=utterances,
     )
 
 
@@ -233,6 +256,11 @@ def main(argv: list[str] | None = None) -> int:
         help="비의사 화자를 한 사람으로 합쳐 판정한다. 화자분리가 한 사람을 여러 명으로 쪼갰을 때 쓴다.",
     )
     parser.add_argument(
+        "--sentences",
+        action="store_true",
+        help="화자 라벨을 무시하고 문장 단위로 역할을 가른다. 목소리가 하나뿐인 녹음에 쓴다.",
+    )
+    parser.add_argument(
         "--date",
         type=dt.date.fromisoformat,
         default=dt.date.today(),
@@ -251,7 +279,15 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     compare = load(args.compare)[0] if args.compare else None
-    has_speakers = any(u.speaker_tag for u in utterances)
+    has_speakers = any(u.speaker_tag for u in utterances) and not args.sentences
+    if has_speakers and _diarization_collapsed(utterances):
+        # 화자분리가 사실상 한 명만 내놨다. 화자 단위로 가르면 모든 발화가
+        # 같은 역할을 받으므로 판정이 아니라 복사다. 문장 단위로 내려간다.
+        has_speakers = False
+        warnings.append(
+            "화자분리가 사실상 한 사람만 내놓아 문장 단위 판정으로 내려갔습니다. "
+            "녹음에 목소리가 하나뿐이거나 화자분리가 실패한 것입니다."
+        )
     result = (
         analyze_with_speakers(
             utterances,
@@ -265,11 +301,14 @@ def main(argv: list[str] | None = None) -> int:
     )
     result.warnings = warnings + result.warnings
 
+    # 역할이 붙은 발화로 넘어간다. 문장 단위로 내려간 경우 입력 발화의
+    # 화자 태그는 역할과 짝이 맞지 않아 뒤 단계가 전부 비어서 나온다.
+    labelled = result.labelled or utterances
     corrections = find_corrections(utterances, set(terms.all_terms))
 
     roles_by_tag = {sp.speaker_tag: sp.role for sp in result.speakers}
     facts = extract_facts(
-        utterances, roles_by_tag, terms, corrections, alternate=compare
+        labelled, roles_by_tag, terms, corrections, alternate=compare
     )
 
     if args.json:
@@ -293,8 +332,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.full:
         roles = {s.speaker_tag: s.role.value for s in result.speakers}
-        turns = group_turns(utterances)
-        print(f"\n전체 대화 ({len(turns)}발언 / {len(utterances)}구간)")
+        turns = group_turns(labelled)
+        print(f"\n전체 대화 ({len(turns)}발언 / {len(labelled)}구간)")
         for turn in turns:
             stamp = f"{turn.start_ms // 60000:02d}:{turn.start_ms // 1000 % 60:02d}"
             role = roles.get(turn.speaker_tag, "UNKNOWN")

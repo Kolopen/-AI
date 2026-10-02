@@ -1,8 +1,10 @@
 import json
 from pathlib import Path
 
+from voice_ai import terminology
+from voice_ai.analyze import _diarization_collapsed, analyze_without_speakers
 from voice_ai.clova import group_by_speaker, parse_segments
-from voice_ai.models import Role
+from voice_ai.models import Role, Utterance
 from voice_ai.qa import pair_qa
 from voice_ai.roles import classify
 
@@ -169,3 +171,34 @@ def test_spaced_transcript_is_not_warned_about():
     )
 
     assert not any("띄어쓰기" in w for w in result.warnings)
+
+
+def test_one_speaker_means_diarization_told_us_nothing():
+    # 실제 3인 녹음에서 화자분리가 한 명만 내놨다. 화자 단위로 가르면
+    # 모든 발화가 같은 역할을 받아 의사와 환자를 구분하지 못한다.
+    collapsed = [
+        Utterance("speaker_00", 0, 180_000, "두통이 언제부터 있으셨어요? " * 20),
+        Utterance("speaker_01", 180_000, 181_000, "네 맞아요 그렇습니다"),
+    ]
+    assert _diarization_collapsed(collapsed)
+
+
+def test_two_speaking_speakers_are_kept():
+    kept = [
+        Utterance("speaker_00", 0, 180_000, "두통이 언제부터 있으셨어요? " * 20),
+        Utterance("speaker_01", 180_000, 240_000, "한 달쯤 됐어요 참다가 왔어요. " * 5),
+    ]
+    assert not _diarization_collapsed(kept)
+
+
+def test_sentence_mode_hands_back_role_labelled_utterances():
+    # 문장 단위로 내려가면 화자 태그가 역할 이름으로 바뀐다. 이걸 돌려주지
+    # 않으면 핵심 내용 추출이 입력 태그로 의사 발화를 찾다가 전부 놓친다.
+    terms = terminology.load("신경과")
+    result = analyze_without_speakers(
+        [Utterance("", 0, 9_000, "편두통 양상과 함께 나타날 수 있습니다. 약은 매일 드셔야 합니다.")],
+        terms=terms,
+    )
+
+    assert result.labelled
+    assert Role.DOCTOR.value in {u.speaker_tag for u in result.labelled}

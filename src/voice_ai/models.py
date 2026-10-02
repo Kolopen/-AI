@@ -122,3 +122,7 @@ class AnalysisResult:
     unasked_question_ids: list[str] = field(default_factory=list)
     report_draft: ReportDraft = field(default_factory=ReportDraft)
     warnings: list[str] = field(default_factory=list)
+    # 역할이 확정된 발화. 화자 라벨이 있으면 입력 그대로이고, 문장 단위로
+    # 가른 경우에는 `speaker_tag` 가 역할 이름으로 바뀐 문장들이다. 뒤 단계가
+    # 역할로 발화를 고르므로 입력이 아니라 이쪽을 봐야 한다.
+    labelled: list[Utterance] = field(default_factory=list)
