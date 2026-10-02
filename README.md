@@ -189,15 +189,27 @@ VOICE_MODELS=~/models ./scripts/run.sh 진료녹음.m4a 내과 2026-10-02
 ```
 
 두 엔진을 같은 설정으로 돌리고 맞대어 분석한다. 모델이 하나라도 없으면 전사를
-시작하기 전에 어느 파일이 없는지 알려준다. 결과는 `data/real/<파일이름>/` 에
-쌓이고, 이 경로는 `.gitignore` 가 막고 있어 실제 진료 전사가 저장소로 새지 않는다.
+시작하기 전에 어느 파일이 없는지 알려준다.
+
+결과는 녹음 파일 옆에 쌓인다. 녹음을 어디 두든 한 건이 한 폴더에 모인다.
 
 ```
-data/real/진료녹음/
-  sense.json    본문 전사
-  moon.json     맞대기 전사
-  report.txt    사람이 읽는 분석
-  report.json   Core API 로 넘길 형태
+~/Desktop/bodeul-voice/진료녹음.m4a
+~/Desktop/bodeul-voice/진료녹음/
+    sense.json    본문 전사
+    moon.json     맞대기 전사
+    report.txt    사람이 읽는 분석
+    report.json   Core API 로 넘길 형태
+```
+
+`VOICE_OUT` 으로 다른 곳에 보낼 수 있다. 저장소 안에 두더라도 전사 결과는
+`.gitignore` 가 막지만, 실제 진료 음성이면 녹음 자체도 저장소 밖에 두는 편이
+안전하다.
+
+인원을 알면 `VOICE_SPEAKERS` 로 알려준다. 기본값은 3이다.
+
+```bash
+VOICE_SPEAKERS=2 VOICE_MODELS=~/models ./scripts/run.sh 진료녹음.m4a
 ```
 
 아래는 그 안에서 실제로 도는 명령이다. 따로 바꿔 끼울 때 쓴다.

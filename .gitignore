@@ -13,5 +13,9 @@ data/real/
 *.mp3
 clova_raw_*.json
 
-# 전사 결과도 실제 진료 내용이다
+# 전사와 분석 결과도 실제 진료 내용이다
 chunks*.json
+sense.json
+moon.json
+report.txt
+report.json

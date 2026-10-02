@@ -4,8 +4,13 @@
 #   ./scripts/run.sh 녹음.m4a [진료과] [진료일]
 #   ./scripts/run.sh 녹음.m4a 내과 2026-10-02
 #
-# 결과는 data/real/<파일이름>/ 에 쌓인다. 이 경로는 .gitignore 가 막고 있어
-# 실제 진료 전사가 저장소로 새지 않는다.
+# 결과는 녹음 파일 옆에 파일 이름으로 폴더를 만들어 쌓는다. 녹음을 어디
+# 두든 결과가 따라가므로 한 건이 한 폴더에 모인다. VOICE_OUT 으로 바꾼다.
+#
+#   ~/Desktop/bodeul-voice/녹음.m4a  ->  ~/Desktop/bodeul-voice/녹음/
+#
+# 저장소 안에 두더라도 전사 결과는 .gitignore 가 막는다. 실제 진료 음성이면
+# 녹음 자체도 저장소 밖에 두는 편이 안전하다.
 #
 # 모델 경로는 VOICE_MODELS 로 바꾼다. 기본값은 현재 폴더다.
 #   VOICE_MODELS=~/models ./scripts/run.sh 녹음.m4a
@@ -51,8 +56,9 @@ if [ "$missing" -ne 0 ]; then
 fi
 
 name="$(basename "${AUDIO%.*}")"
-OUT="data/real/$name"
+OUT="${VOICE_OUT:-$(cd "$(dirname "$AUDIO")" && pwd)/$name}"
 mkdir -p "$OUT"
+echo "결과 폴더: $OUT"
 
 echo "[1/3] sensevoice 전사"
 voice-transcribe "$AUDIO" \
