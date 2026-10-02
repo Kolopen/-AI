@@ -490,7 +490,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--encoder", type=Path, help="moonshine/whisper/zipformer: encoder")
     parser.add_argument("--decoder", type=Path, help="moonshine/whisper/zipformer: decoder")
     parser.add_argument("--joiner", type=Path, help="zipformer: joiner")
-    parser.add_argument("--tokens", type=Path, required=True, help="tokens.txt")
+    # faster-whisper 는 토크나이저를 모델 안에 품고 있어 필요 없다. 엔진마다
+    # 무엇이 필요한지는 ENGINE_FILES 가 정하고 아래에서 함께 확인한다.
+    parser.add_argument("--tokens", type=Path, help="tokens.txt (faster-whisper 는 불필요)")
     parser.add_argument("--vad", type=Path, help="silero_vad.onnx (화자분리를 안 쓸 때)")
     parser.add_argument(
         "--segmentation", type=Path, help="화자분리 모델. 주면 VAD 대신 화자별로 끊는다."

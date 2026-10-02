@@ -400,3 +400,27 @@ def test_hotwords_are_capped():
 
     assert len(build_hotwords("신경과")) == HOTWORD_LIMIT
     assert len(build_hotwords("신경과", limit=5)) == 5
+
+
+def test_faster_whisper_does_not_need_tokens(monkeypatch, capsys):
+    # --tokens 를 필수로 두면 토크나이저를 품은 엔진이 아예 못 돈다.
+    from voice_ai import transcribe as module
+
+    monkeypatch.setattr(module, "load_audio", lambda path: None)
+    with pytest.raises(SystemExit):
+        module.main(["x.m4a", "--engine", "faster-whisper", "--model", "어떤/모델"])
+
+    # usage 줄에는 --tokens 가 나오므로 마지막 error 줄만 본다.
+    complaint = capsys.readouterr().err.strip().splitlines()[-1]
+    assert "--tokens" not in complaint
+
+
+def test_sensevoice_still_needs_tokens(capsys):
+    from voice_ai import transcribe as module
+
+    with pytest.raises(SystemExit):
+        module.main(["x.m4a", "--engine", "sensevoice", "--model", "m.onnx",
+                     "--vad", "v.onnx"])
+
+    complaint = capsys.readouterr().err.strip().splitlines()[-1]
+    assert "--tokens" in complaint
