@@ -448,3 +448,45 @@ def test_an_unknown_failure_keeps_the_original_message():
     from voice_ai.transcribe import _model_hint
 
     assert "디스크가 가득" in _model_hint("나/모델", RuntimeError("디스크가 가득 찼습니다"))
+
+
+def test_whisper_skips_short_chunks():
+    # whisper 는 30초 창으로 학습돼서 0.3초를 주면 나머지를 묵음으로 채우고,
+    # 디코더가 그 빈자리를 학습 데이터에서 본 문장으로 메운다.
+    from voice_ai.transcribe import default_min_chunk
+
+    assert default_min_chunk("faster-whisper") == 2.0
+    assert default_min_chunk("sensevoice") == 0.1
+
+
+def test_a_phrase_said_three_times_is_a_decoder_loop():
+    # 사람은 같은 문장을 세 번 잇달아 말하지 않는다.
+    from voice_ai.transcribe import looks_repeated
+
+    assert looks_repeated("연기한다고 연기한다고 연기한다고 발표했다")
+    assert looks_repeated("그렇죠? 그렇죠? 그렇죠?")
+    assert looks_repeated(
+        "홍 사장의 발언에 국감장이 술렁이자 조정식의 발언에 국감장이 술렁이자 "
+        "조정식의 발언에 국감장이 술렁이자 조정식의 발언이 됐어요"
+    )
+
+
+def test_an_ordinary_sentence_is_not_a_loop():
+    from voice_ai.transcribe import looks_repeated
+
+    assert not looks_repeated("네 서로 다른 날짜일 수 있습니다 접수에서 조정을 확인하고 가세요")
+    # 말을 더듬어 한 낱말을 두 번 한 것은 구멍이 아니다.
+    assert not looks_repeated("익숙 익숙한 곳에서 길을 잃은 적도 있으세요")
+
+
+def test_short_turns_never_reach_the_recognizer():
+    from voice_ai.transcribe import transcribe_turns
+
+    class Boom:
+        def create_stream(self):
+            raise AssertionError("짧은 구간이 인식기까지 갔습니다")
+
+    audio = np.zeros(16000 * 10, dtype=np.float32)
+    turns = [("speaker_00", 0, 1_500)]
+
+    assert transcribe_turns(audio, turns, recognizer=Boom(), min_chunk_duration=2.0) == []

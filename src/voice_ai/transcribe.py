@@ -123,6 +123,50 @@ def default_max_chunk(engine: str) -> float:
     return DEFAULT_MAX_CHUNK.get(engine, FALLBACK_MAX_CHUNK)
 
 
+# 이보다 짧은 구간은 whisper 계열에 먹이지 않는다.
+#
+# whisper 는 30초 창으로 학습됐다. 0.3초짜리를 주면 나머지 29.7초를 묵음으로
+# 채우는데, 디코더가 그 빈자리를 학습 데이터에서 본 문장으로 메운다. 실제
+# 녹음에서 한국어 파인튜닝 모델이 이렇게 내놨다.
+#
+#   0.12초  "홍 사장의 발언에 국감장이 술렁이자 조정식의 발언에..."
+#   0.62초  "고속도로 교통정보고 좋습니다"
+#   1.62초  "북측에서 폭풍이 불어 닥쳤다"
+#
+# 녹음에 없는 말이다. 길이로 줄 세우면 2초 미만 18개 중 9개가 이런 환각이고,
+# 2초 이상 19개 중에서는 1개였다.
+#
+# 2초를 넘겨도 맞는 말이 버려진다("감사합니다" 0.86초, "결국 어디서
+# 찾았을까요" 1.52초). 그래도 지어낸 문장이 리포트에 들어가는 것보다 낫다.
+# 빠진 것은 눈에 보이고 지어낸 것은 보이지 않는다.
+MIN_CHUNK_SECONDS = {"faster-whisper": 2.0, "whisper": 2.0}
+FALLBACK_MIN_CHUNK = 0.1
+
+
+def default_min_chunk(engine: str) -> float:
+    return MIN_CHUNK_SECONDS.get(engine, FALLBACK_MIN_CHUNK)
+
+
+# 같은 말이 이보다 많이 되풀이되면 디코더가 구멍에 빠진 것으로 본다.
+# moonshine 의 "그렇죠? 그렇죠? 그렇죠?" 와 한국어 모델의 "조정식의 발언에"
+# 세 번이 같은 모양이다. 사람은 같은 문장을 세 번 잇달아 말하지 않는다.
+MAX_REPEATS = 3
+
+
+def looks_repeated(text: str, *, limit: int = MAX_REPEATS) -> bool:
+    """같은 조각이 되풀이되는지 본다. 길이를 바꿔가며 훑는다."""
+    words = text.split()
+    for size in range(1, len(words) // limit + 1):
+        for start in range(len(words) - size * limit + 1):
+            piece = words[start : start + size]
+            if all(
+                words[start + size * n : start + size * (n + 1)] == piece
+                for n in range(1, limit)
+            ):
+                return True
+    return False
+
+
 def _model_hint(model: str, error: Exception) -> str:
     """모델을 못 불러온 까닭을 한 줄로 알려준다.
 
@@ -341,6 +385,7 @@ def transcribe_turns(
     *,
     recognizer,
     max_chunk_duration: float = 10.0,
+    min_chunk_duration: float = FALLBACK_MIN_CHUNK,
 ) -> list[dict]:
     """화자분리가 잡아준 구간마다 전사한다. 구간이 곧 한 사람의 발언이다.
 
@@ -351,21 +396,22 @@ def transcribe_turns(
     """
     chunks: list[dict] = []
     max_samples = int(max_chunk_duration * SAMPLE_RATE)
+    min_samples = int(min_chunk_duration * SAMPLE_RATE)
 
     for speaker, start_ms, end_ms in turns:
         piece = audio[int(start_ms * SAMPLE_RATE / 1000) : int(end_ms * SAMPLE_RATE / 1000)]
-        if len(piece) < SAMPLE_RATE // 10:  # 0.1초 미만은 버린다
+        if len(piece) < min_samples:
             continue
 
         for offset, part in _split_long(piece, max_samples):
-            if len(part) < SAMPLE_RATE // 10:
+            if len(part) < min_samples:
                 continue
             stream = recognizer.create_stream()
             stream.accept_waveform(SAMPLE_RATE, part)
             recognizer.decode_stream(stream)
 
             raw = _clean(stream.result.text)
-            if not raw:
+            if not raw or looks_repeated(raw):
                 continue
 
             part_start = start_ms + round(offset * 1000 / SAMPLE_RATE)
@@ -589,6 +635,12 @@ def main(argv: list[str] | None = None) -> int:
         "생략하면 엔진에 맞춘다(whisper 30, 나머지 10).",
     )
     parser.add_argument(
+        "--min-chunk",
+        type=float,
+        help="이보다 짧은 구간은 버린다(초). 생략하면 엔진에 맞춘다"
+        "(whisper 계열 2.0, 나머지 0.1). whisper 는 짧은 구간에서 없는 말을 지어낸다.",
+    )
+    parser.add_argument(
         "--max-speech",
         type=float,
         default=10.0,
@@ -603,6 +655,8 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.max_chunk is None:
         args.max_chunk = default_max_chunk(args.engine)
+    if args.min_chunk is None:
+        args.min_chunk = default_min_chunk(args.engine)
 
     if not args.segmentation and not args.vad:
         parser.error("--segmentation(+--embedding) 또는 --vad 중 하나는 있어야 합니다.")
@@ -644,7 +698,11 @@ def main(argv: list[str] | None = None) -> int:
         speakers = sorted({speaker for speaker, _, _ in turns})
         print(f"화자 {len(speakers)}명, 발언 {len(turns)}구간을 찾았습니다. 전사를 시작합니다.")
         chunks = transcribe_turns(
-            audio, turns, recognizer=recognizer, max_chunk_duration=args.max_chunk
+            audio,
+            turns,
+            recognizer=recognizer,
+            max_chunk_duration=args.max_chunk,
+            min_chunk_duration=args.min_chunk,
         )
         if args.manager:
             chunks = _mark_manager(audio, turns, chunks, args.manager, args.embedding, args.threads)
