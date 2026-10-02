@@ -348,6 +348,34 @@ def transcribe(
     return chunks
 
 
+def _mark_manager(
+    audio: np.ndarray,
+    turns: list[tuple[str, int, int]],
+    chunks: list[dict],
+    voiceprint_path: Path,
+    embedding_model: Path,
+    num_threads: int,
+) -> list[dict]:
+    """등록된 성문과 닮은 화자를 찾아 매니저로 표시한다.
+
+    못 찾으면 아무것도 바꾸지 않는다. 억지로 배정하면 환자가 매니저로 고정되어
+    역할이 통째로 뒤바뀐다.
+    """
+    from .voiceprint import Voiceprint, build_extractor, find_manager
+
+    voiceprint = Voiceprint.load(voiceprint_path)
+    extractor = build_extractor(embedding_model, num_threads=num_threads)
+    tag, scores = find_manager(audio, turns, voiceprint, extractor)
+
+    rows = "  ".join(f"{speaker} {score}" for speaker, score in sorted(scores.items()))
+    if tag is None:
+        print(f"성문 매칭 실패 ({voiceprint.name}). 유사도: {rows}")
+        return chunks
+
+    print(f"매니저 확정: {tag} = {voiceprint.name}. 유사도: {rows}")
+    return [{**chunk, "is_manager": chunk["speaker"] == tag} for chunk in chunks]
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="녹음 파일을 SenseVoice로 전사한다.")
     parser.add_argument("audio", type=Path, help="녹음 파일 (m4a, wav, mp3 등)")
@@ -367,6 +395,11 @@ def main(argv: list[str] | None = None) -> int:
         "--segmentation", type=Path, help="화자분리 모델. 주면 VAD 대신 화자별로 끊는다."
     )
     parser.add_argument("--embedding", type=Path, help="화자 임베딩 모델")
+    parser.add_argument(
+        "--manager",
+        type=Path,
+        help="voice-enroll 로 만든 매니저 성문(.json). 주면 그 화자를 매니저로 확정한다.",
+    )
     parser.add_argument(
         "--speakers",
         type=int,
@@ -439,6 +472,8 @@ def main(argv: list[str] | None = None) -> int:
         chunks = transcribe_turns(
             audio, turns, recognizer=recognizer, max_chunk_duration=args.max_chunk
         )
+        if args.manager:
+            chunks = _mark_manager(audio, turns, chunks, args.manager, args.embedding, args.threads)
     else:
         print("전사를 시작합니다.")
         chunks = transcribe(

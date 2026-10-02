@@ -18,6 +18,7 @@ transcribe = ["sherpa-onnx>=1.10"]
 dev = ["pytest>=8.0"]
 
 [project.scripts]
+voice-enroll = "voice_ai.enroll:main"
 voice-transcribe = "voice_ai.transcribe:main"
 voice-analyze = "voice_ai.analyze:main"
 

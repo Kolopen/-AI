@@ -193,10 +193,13 @@ def analyze_with_speakers(
     merge_non_doctor: bool = False,
     compare_with: list[Utterance] | None = None,
     consult_date: dt.date | None = None,
+    manager_speaker_tag: str | None = None,
 ) -> AnalysisResult:
     """화자 라벨이 있는 전사. 화자 단위로 역할을 가른다."""
     speakers, warnings = classify(
-        group_by_speaker(utterances), merge_non_doctor=merge_non_doctor
+        group_by_speaker(utterances),
+        merge_non_doctor=merge_non_doctor,
+        manager_speaker_tag=manager_speaker_tag,
     )
     spacing = _spacing_warning(utterances)
     if spacing:
@@ -234,6 +237,20 @@ def load(path: Path) -> tuple[list[Utterance], list[str]]:
     payload = json.loads(path.read_text(encoding="utf-8"))
     chunks = payload if isinstance(payload, list) else payload.get("chunks", [])
     return sensevoice.parse_chunks(chunks)
+
+
+def manager_tag(path: Path) -> str | None:
+    """전사에 성문으로 확정된 매니저가 있으면 그 화자 태그를 돌려준다.
+
+    `voice-transcribe --manager` 가 붙인 표시다. 없으면 None 이고, 그때는
+    역할 판정이 지금까지처럼 어휘로만 돈다.
+    """
+    if path.suffix == ".txt":
+        return None
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    chunks = payload if isinstance(payload, list) else payload.get("chunks", [])
+    tags = {c.get("speaker") for c in chunks if c.get("is_manager")}
+    return next(iter(tags)) if len(tags) == 1 else None
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -295,6 +312,7 @@ def main(argv: list[str] | None = None) -> int:
             merge_non_doctor=args.merge_non_doctor,
             compare_with=compare,
             consult_date=args.date,
+            manager_speaker_tag=manager_tag(args.transcript),
         )
         if has_speakers
         else analyze_without_speakers(utterances, terms=terms, consult_date=args.date)

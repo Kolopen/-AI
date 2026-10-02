@@ -2,7 +2,7 @@ import json
 from pathlib import Path
 
 from voice_ai import terminology
-from voice_ai.analyze import _diarization_collapsed, analyze_without_speakers
+from voice_ai.analyze import _diarization_collapsed, analyze_without_speakers, manager_tag
 from voice_ai.clova import group_by_speaker, parse_segments
 from voice_ai.models import Role, SpeakerProfile, Utterance
 from voice_ai.qa import pair_qa
@@ -290,3 +290,33 @@ def test_proxy_marker_survives_a_dropped_syllable():
     role, _ = sentence_role("보호자분이 치매를 뜻하는지 궁금하셨어요")
 
     assert role is Role.MANAGER
+
+
+def test_the_enrolled_manager_is_read_back_from_the_transcript(tmp_path):
+    # voice-transcribe --manager 가 붙인 표시를 분석 쪽이 그대로 받는다.
+    path = tmp_path / "chunks.json"
+    path.write_text(
+        json.dumps(
+            [
+                {"speaker": "speaker_00", "start_ms": 0, "end_ms": 9000,
+                 "raw_text": "약을 드셔 보시고", "is_manager": False},
+                {"speaker": "speaker_01", "start_ms": 9000, "end_ms": 18000,
+                 "raw_text": "보호자분이 여쭤봐 달라고 하셨어요", "is_manager": True},
+            ],
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    assert manager_tag(path) == "speaker_01"
+
+
+def test_no_manager_tag_without_enrolment(tmp_path):
+    path = tmp_path / "chunks.json"
+    path.write_text(
+        json.dumps([{"speaker": "speaker_00", "start_ms": 0, "end_ms": 9000,
+                     "raw_text": "약을 드셔 보시고"}]),
+        encoding="utf-8",
+    )
+
+    assert manager_tag(path) is None
