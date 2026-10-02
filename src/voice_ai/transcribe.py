@@ -456,12 +456,18 @@ def transcribe(
 # 정도 잡힌다.
 HOTWORD_SECTIONS = ("condition", "test", "drug")
 
-# 60개를 넣었더니 디코더가 아무것도 안 내놨다. 같은 구간이 용어 없이는
-# 멀쩡히 나왔으므로 프롬프트가 길어서 생긴 일이다. faster-whisper 는 넘친
-# 만큼을 자를 뿐 경고하지 않아서, 조용히 전사 전체가 빈 채로 끝났다.
+# 실제 녹음으로 재 본 결과, 용어를 알려주는 것이 ghost613 한국어 모델을
+# 망가뜨렸다. 기본으로 켜지 않는 까닭이다.
 #
-# 용어를 알려주는 것은 거드는 장치다. 거들려다 본 일을 막으면 안 되므로
-# 짧게 간다. --hotwords 로 직접 주면 이 상한을 쓰지 않는다.
+#   용어 없이   안녕하세요 지난번 이후 기업력 때문에 불폐한 일이 있었나요
+#   용어 60개   <아무것도 안 나옴>
+#   용어 12개   "이 아홉 명의 발언에 제기되었습니다" 가 아홉 번. 녹음에 없는 말이다.
+#
+# 디코더 프롬프트에 무엇을 넣든 모델은 그쪽으로 끌려간다. 의료 용어를 끼워
+# 넣으려다 문장 전체를 지어내게 만들면 얻는 것보다 잃는 것이 크다.
+#
+# 모델마다 다를 수 있으므로 길은 남겨 둔다. 쓰려면 --hotwords 로 직접 주고,
+# 짧은 구간으로 먼저 재 봐야 한다.
 HOTWORD_LIMIT = 12
 
 
@@ -554,12 +560,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--embedding", type=Path, help="화자 임베딩 모델")
     parser.add_argument(
-        "--department",
-        help="faster-whisper 전용. 그 진료과 용어를 디코더에 미리 알려준다(hotwords).",
-    )
-    parser.add_argument(
         "--hotwords",
-        help="디코더에 미리 알려줄 말. 쉼표로 나눈다. --department 대신 직접 주고 싶을 때.",
+        help="디코더에 미리 알려줄 말(쉼표로 나눈다). 모델을 망가뜨릴 수 있으니 "
+        "쓰기 전에 짧은 구간으로 먼저 재 보세요. README 의 '용어 알려주기' 참고.",
     )
     parser.add_argument(
         "--manager",
@@ -611,10 +614,6 @@ def main(argv: list[str] | None = None) -> int:
         parser.error(f"--engine {args.engine} 에는 {', '.join(missing)} 이(가) 필요합니다.")
 
     hotwords = args.hotwords
-    if hotwords is None and args.department:
-        chosen = build_hotwords(args.department)
-        hotwords = ", ".join(chosen)
-        print(f"{args.department} 용어 {len(chosen)}개를 디코더에 알려줍니다.")
     if hotwords and args.engine not in PATHLESS_ENGINES:
         print(f"--hotwords 는 {args.engine} 에서는 무시됩니다.", file=sys.stderr)
 
