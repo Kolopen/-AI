@@ -188,8 +188,8 @@ tar -xf sherpa-onnx-whisper-turbo.tar.bz2
 자리를 묵음으로 채우고 같은 시간을 쓴다. 그래서 `--max-chunk` 를 생략하면
 엔진에 맞춘다(whisper 30, 나머지 10).
 
-102초짜리 실제 진료 녹음으로 세 엔진을 같은 설정(`--speakers 3 --max-chunk 8`)
-으로 돌려 견줬다. **기본값은 sensevoice 다.**
+102초짜리 내과 재진(2인)으로 세 엔진을 같은 설정(`--speakers 3 --max-chunk 8`)
+으로 돌려 견줬다.
 
 | | sensevoice | moonshine | zipformer |
 |---|---|---|---|
@@ -201,14 +201,51 @@ tar -xf sherpa-onnx-whisper-turbo.tar.bz2
 
 moonshine 이 읽기에는 훨씬 낫다. 문장부호가 붙어 문장이 제대로 끊기고 Q&A
 답변도 온전하게 나온다. 처음에는 이것만 보고 moonshine 으로 정했는데, 두
-엔진을 맞대어 보니 **검사 수치를 통째로 흘리고 있었다.**
+엔진을 맞대어 보니 **검사 수치를 통째로 흘리고 있었다.** 읽기 나쁜 것은
+사람이 고칠 수 있지만("작년는"은 읽으면 안다) 없는 숫자는 녹음을 다시 듣기
+전에는 되살릴 수 없다.
 
-읽기 나쁜 것은 사람이 고칠 수 있다. "작년는"은 읽으면 안다. 없는 숫자는
-녹음을 다시 듣기 전에는 되살릴 수 없다. 그래서 내용을 지키는 쪽을 본문으로
-쓴다.
+131초짜리 신경과 재진(3인)으로 다시 쟀다. 이번에는 whisper 를 넣고, 사람이
+받아 적은 기준으로 CLOVA 전사를 함께 뒀다. **본문은 whisper 다.**
 
-moonshine 은 맞대기용으로 쓴다. 문법이 다르게 틀리므로 어긋난 자리를 잘 짚어
-준다. zipformer 는 띄어쓰기가 없어 뒤 단계가 돌지 않으므로 쓰지 않는다.
+| | whisper | sensevoice | moonshine | CLOVA |
+|---|---|---|---|---|
+| 치매 | 0 | 0 | 0 | 2 |
+| 26점 | 2 | 2 | **1** | 4 |
+| 30점 만점 | 1 (안에) | 1 (만쯤) | **0** | 1 |
+| MRI | 3 | 2 (엠알아) | 2 | 4 |
+| 궁금해하셨 | **1** | 0 | 0 | 1 |
+| 지어낸 숫자 | **없음** | 2, 4, 6 | - | 없음 |
+| 통째로 흘린 구간 | 0 | 0 | **8** | 0 |
+
+엔진마다 **틀리는 방식**이 다르고, 그게 고르는 기준이 된다.
+
+```
+whisper      글자를 빼먹는다        "지난번 이후" -> "지 이후"
+sensevoice   없는 숫자를 만든다      "오셨죠" -> "50죠"
+moonshine    문장을 지어낸다        "그렇죠? 그렇죠? 그렇죠?"
+```
+
+의료 기록에서는 **빼먹는 쪽이 낫다.** 빠진 것은 눈에 보이고 틀린 숫자는 보이지
+않는다. whisper 는 이 녹음에서 숫자를 하나도 지어내지 않았고, 영문 약어(MRI,
+B12)를 유일하게 제대로 썼다.
+
+moonshine 은 쓰지 않는다. 8개 구간을 통째로 흘렸는데 그중 하나가 이 진료에서
+제일 중요한 문장이었다("30점 만점에 26점"). 흘리지 않은 자리에서는 안 한 말을
+지어냈다. 앵커에서 수치를 흘린 것과 같은 성질이고 이번에는 문장 단위였다.
+zipformer 는 띄어쓰기가 없어 뒤 단계가 돌지 않는다.
+
+맞대기는 sensevoice 로 한다. 틀리는 방식이 whisper 와 달라서 어긋난 자리를
+잘 짚는다. 두 엔진에 같은 `--max-chunk` 를 주지는 않는다. whisper 는 30초,
+sensevoice 는 10초가 맞아서 같은 값을 주면 한쪽이 손해를 본다. 맞대기는 15초
+단위로 숫자를 견주고 용어는 녹음 전체에서 한 번씩 보므로, 구간을 다르게 끊어도
+비교가 어긋나지 않는다.
+
+**치매는 로컬 엔진 셋 다 못 받아 적었다.** CLOVA 만 잡았다. 사후 교정으로도
+못 살린다. 두 글자 용어는 사전 근거만으로 고치지 않기 때문인데(`terms.py`),
+그 규칙을 풀면 "보고요"가 "복통"이 되는 쪽이 열린다. 없는 증상이 리포트에
+실리는 편이 치매를 한 번 놓치는 것보다 나쁘다. 남은 길은 키워드 부스팅인데,
+sherpa-onnx 는 transducer 에만 지원하므로 whisper 에는 쓸 수 없다.
 
 한국어 ITN(`rule_fsts`)과 호모폰 교정(`hr_*`)은 sherpa-onnx에 있긴 하지만
 중국어 전용이다(`itn_zh_number.fst`뿐이고, 호모폰 교정기는 한자가 아니면
@@ -223,16 +260,16 @@ source .venv/bin/activate
 VOICE_MODELS=~/models ./scripts/run.sh 진료녹음.m4a 내과 2026-10-02
 ```
 
-두 엔진을 같은 설정으로 돌리고 맞대어 분석한다. 모델이 하나라도 없으면 전사를
-시작하기 전에 어느 파일이 없는지 알려준다.
+본문은 whisper, 맞대기는 SenseVoice 로 돌리고 어긋난 자리를 표시한다. 모델이
+하나라도 없으면 전사를 시작하기 전에 어느 파일이 없는지 알려준다.
 
 결과는 녹음 파일 옆에 쌓인다. 녹음을 어디 두든 한 건이 한 폴더에 모인다.
 
 ```
 ~/Desktop/bodeul-voice/진료녹음.m4a
 ~/Desktop/bodeul-voice/진료녹음/
-    sense.json    본문 전사
-    moon.json     맞대기 전사
+    whisper.json  본문 전사
+    sense.json    맞대기 전사
     report.txt    사람이 읽는 분석
     report.json   Core API 로 넘길 형태
 ```
@@ -253,13 +290,15 @@ VOICE_SPEAKERS=2 VOICE_MODELS=~/models ./scripts/run.sh 진료녹음.m4a
 
 ```bash
 voice-transcribe 진료녹음.m4a \
-  --model sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17/model.int8.onnx \
-  --tokens sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17/tokens.txt \
+  --engine whisper \
+  --encoder sherpa-onnx-whisper-turbo/turbo-encoder.int8.onnx \
+  --decoder sherpa-onnx-whisper-turbo/turbo-decoder.int8.onnx \
+  --tokens sherpa-onnx-whisper-turbo/turbo-tokens.txt \
   --segmentation sherpa-onnx-pyannote-segmentation-3-0/model.onnx \
   --embedding 3dspeaker_speech_eres2net_base_sv_zh-cn_3dspeaker_16k.onnx \
-  --speakers 2
+  --speakers 3 --out whisper.json
 
-voice-analyze chunks.json
+voice-analyze whisper.json
 ```
 
 `--speakers`로 인원을 알려준다. 생략하면(`-1`) 거리 기준으로 알아서 나누는데,
@@ -412,7 +451,7 @@ moonshine 이 "심장"으로 썼으며, 숫자를 잇는 말은 반대로 moonsh
 먹이니 시간이 그대로 맞아 비교가 간단해진다.
 
 ```bash
-voice-analyze chunks_moon.json --department 내과 --compare chunks_sense.json
+voice-analyze whisper.json --department 신경과 --compare sense.json
 ```
 
 숫자와 의학 용어가 엇갈리는 자리를 경고로 알린다. **엇갈리지 않으면 아무 말도
