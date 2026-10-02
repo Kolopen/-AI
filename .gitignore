@@ -12,3 +12,6 @@ data/real/
 *.wav
 *.mp3
 clova_raw_*.json
+
+# 전사 결과도 실제 진료 내용이다
+chunks*.json
