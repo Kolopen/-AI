@@ -182,8 +182,11 @@ curl -L -O https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sh
 tar -xf sherpa-onnx-whisper-turbo.tar.bz2
 ```
 
+내려받으면 `int8` 판만 들어 있다. 인코더가 675MB, 디코더가 361MB다.
+
 30초 창으로 도는 구조라 `--max-chunk` 를 짧게 줘도 빨라지지 않는다. 남는
-자리를 묵음으로 채우고 같은 시간을 쓴다.
+자리를 묵음으로 채우고 같은 시간을 쓴다. 그래서 `--max-chunk` 를 생략하면
+엔진에 맞춘다(whisper 30, 나머지 10).
 
 102초짜리 실제 진료 녹음으로 세 엔진을 같은 설정(`--speakers 3 --max-chunk 8`)
 으로 돌려 견줬다. **기본값은 sensevoice 다.**

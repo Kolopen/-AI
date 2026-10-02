@@ -104,9 +104,15 @@ ENGINE_FILES = {
     "zipformer": ("encoder", "decoder", "joiner", "tokens"),
 }
 
-# whisper 는 30초 창으로 돌아간다. 그보다 짧게 끊으면 남는 자리를 묵음으로
-# 채워 넣고도 같은 시간을 쓰므로, 짧게 끊을수록 느려지기만 한다.
-WHISPER_WINDOW_SECONDS = 30.0
+# 구간이 이보다 길면 조용한 자리에서 끊는다. whisper 는 30초 창으로 돌아가서
+# 그보다 짧게 끊으면 남는 자리를 묵음으로 채우고도 같은 시간을 쓴다. 10초로
+# 끊으면 문맥만 잘리고 세 배 느려진다.
+DEFAULT_MAX_CHUNK = {"whisper": 30.0}
+FALLBACK_MAX_CHUNK = 10.0
+
+
+def default_max_chunk(engine: str) -> float:
+    return DEFAULT_MAX_CHUNK.get(engine, FALLBACK_MAX_CHUNK)
 
 
 def build_recognizer(
@@ -377,8 +383,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--max-chunk",
         type=float,
-        default=10.0,
-        help="화자분리 구간이 이보다 길면 조용한 지점에서 끊는다(초).",
+        help="화자분리 구간이 이보다 길면 조용한 지점에서 끊는다(초). "
+        "생략하면 엔진에 맞춘다(whisper 30, 나머지 10).",
     )
     parser.add_argument(
         "--max-speech",
@@ -393,6 +399,8 @@ def main(argv: list[str] | None = None) -> int:
         help="이만큼 조용하면 구간을 끊는다(초). 짧을수록 자주 끊는다.",
     )
     args = parser.parse_args(argv)
+    if args.max_chunk is None:
+        args.max_chunk = default_max_chunk(args.engine)
 
     if not args.segmentation and not args.vad:
         parser.error("--segmentation(+--embedding) 또는 --vad 중 하나는 있어야 합니다.")

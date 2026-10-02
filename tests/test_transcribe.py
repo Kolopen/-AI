@@ -373,3 +373,12 @@ def test_non_korean_fragments_are_dropped():
 
     assert transcribe_turns(audio, turn, recognizer=_Fixed("ねね。")) == []
     assert transcribe_turns(audio, turn, recognizer=_Fixed("네네."))[0]["raw_text"] == "네네."
+
+
+def test_whisper_gets_a_longer_chunk_by_default():
+    # whisper 는 30초 창으로 돈다. 10초로 끊으면 남는 자리를 묵음으로 채우고도
+    # 같은 시간을 쓰므로 문맥만 잘리고 느려진다.
+    from voice_ai.transcribe import default_max_chunk
+
+    assert default_max_chunk("whisper") == 30.0
+    assert default_max_chunk("sensevoice") == 10.0
