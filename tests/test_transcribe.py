@@ -424,3 +424,20 @@ def test_sensevoice_still_needs_tokens(capsys):
 
     complaint = capsys.readouterr().err.strip().splitlines()[-1]
     assert "--tokens" in complaint
+
+
+def test_a_private_model_says_what_to_do():
+    # HuggingFace 는 비공개 저장소와 없는 저장소를 똑같이 401 로 돌려준다.
+    # 역추적 40줄을 읽어도 무엇을 해야 할지는 안 나온다.
+    from voice_ai.transcribe import _model_hint
+
+    hint = _model_hint("나/모델", RuntimeError("401 Client Error. Repository Not Found"))
+
+    assert "비공개" in hint
+    assert "hf auth login" in hint
+
+
+def test_an_unknown_failure_keeps_the_original_message():
+    from voice_ai.transcribe import _model_hint
+
+    assert "디스크가 가득" in _model_hint("나/모델", RuntimeError("디스크가 가득 찼습니다"))

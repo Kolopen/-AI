@@ -122,6 +122,31 @@ def default_max_chunk(engine: str) -> float:
     return DEFAULT_MAX_CHUNK.get(engine, FALLBACK_MAX_CHUNK)
 
 
+def _model_hint(model: str, error: Exception) -> str:
+    """모델을 못 불러온 까닭을 한 줄로 알려준다.
+
+    HuggingFace 는 비공개 저장소와 없는 저장소를 똑같이 401 로 돌려준다.
+    역추적 40줄을 읽어도 무엇을 해야 할지는 안 나온다.
+    """
+    text = str(error)
+    if "401" in text or "RepositoryNotFound" in text or "Repository Not Found" in text:
+        return (
+            f"모델을 못 불러왔습니다: {model}\n"
+            "저장소가 비공개이거나 이름이 틀렸습니다. HuggingFace 는 둘을 똑같이 401 로\n"
+            "돌려주므로 구분이 안 됩니다. 셋 중 하나로 푸세요.\n"
+            "  1) 저장소를 public 으로 바꾼다\n"
+            "  2) hf auth login 으로 읽기 토큰을 넣는다 (예전 이름은 huggingface-cli login)\n"
+            "  3) 받아 둔 폴더 경로를 --model 에 그대로 준다"
+        )
+    if "ctranslate2" in text.lower() or "model.bin" in text:
+        return (
+            f"모델을 못 불러왔습니다: {model}\n"
+            "CTranslate2 형식이 아닌 것 같습니다. faster-whisper 용으로 변환된\n"
+            "저장소여야 합니다(폴더 안에 model.bin 이 있습니다)."
+        )
+    return f"모델을 못 불러왔습니다: {model}\n{text}"
+
+
 class _Stream:
     """sherpa-onnx 스트림과 같은 모양. 오디오를 받아 두었다가 한 번에 돌린다."""
 
@@ -154,9 +179,12 @@ class FasterWhisper:
     ) -> None:
         from faster_whisper import WhisperModel
 
-        self.model = WhisperModel(
-            model, device="cpu", compute_type="int8", cpu_threads=num_threads
-        )
+        try:
+            self.model = WhisperModel(
+                model, device="cpu", compute_type="int8", cpu_threads=num_threads
+            )
+        except Exception as error:  # noqa: BLE001 - 어느 라이브러리가 던질지 모른다
+            raise RuntimeError(_model_hint(model, error)) from error
         self.language = language
         self.hotwords = hotwords
 
