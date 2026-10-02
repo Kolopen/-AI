@@ -263,3 +263,18 @@ def test_처방_기간은_그대로_남는다():
     )
 
     assert found.duration == ["두 달분"]
+
+
+def test_깨진_낱말_속_숫자는_수치가_아니다():
+    # whisper 가 "집에서는"을 "12선은"으로 흘렸고, 그 12 가 MRI 수치가 됐다.
+    neurology = terminology.load("신경과")
+    found = extract(
+        [
+            Utterance("D", 0, 9_000, "오늘은 뇌 MRI를 예약하겠습니다"),
+            Utterance("D", 12_000, 20_000, "12선은 뭘 적어면 돼요 적어주세요"),
+        ],
+        ROLES,
+        neurology,
+    )
+
+    assert all("12" not in m.values for m in found.measurements)

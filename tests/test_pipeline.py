@@ -282,3 +282,11 @@ def test_a_statement_ending_in_나요_is_not_a_question():
     pairs, _ = pair_qa(utterances, roles)
 
     assert pairs == []
+
+
+def test_proxy_marker_survives_a_dropped_syllable():
+    # whisper 는 "궁금해하셨어요"를 "궁금하셨어요"로 내놨다. 이 녹음에서 제일
+    # 중요한 질문이 그 한 글자 때문에 통째로 사라졌다.
+    role, _ = sentence_role("보호자분이 치매를 뜻하는지 궁금하셨어요")
+
+    assert role is Role.MANAGER

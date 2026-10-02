@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 from .models import Role, Utterance
 from .roles import split_sentences
 from .terminology import Terminology
-from .schedule import mask_dates, mask_periods
+from .schedule import mask_broken_numbers, mask_dates, mask_periods
 from .scores import Score
 from .scores import extract as extract_scores
 from .timeline import group_by_time, has_marker
@@ -177,7 +177,7 @@ def extract(
 
         # 날짜·시각·기간의 숫자는 검사 수치가 아니다. "10월 20일에 오세요"가
         # 10, 20 두 개의 수치로, "4주 뒤에 보겠습니다"가 4로 잡히던 자리다.
-        spoken = mask_periods(mask_dates(utterance.text))
+        spoken = mask_broken_numbers(mask_periods(mask_dates(utterance.text)))
         numbers = _NUMBER.findall(spoken)
         if not numbers:
             continue
@@ -197,7 +197,7 @@ def extract(
         source, borrowed = spoken, False
         if not has_marker(source) and alternate:
             nearby = " ".join(
-                mask_periods(mask_dates(other.text))
+                mask_broken_numbers(mask_periods(mask_dates(other.text)))
                 for other in alternate
                 if min(other.end_ms, utterance.end_ms) - max(other.start_ms, utterance.start_ms) > 0
             )

@@ -65,6 +65,25 @@ def mask_dates(text: str) -> str:
     return _DATE_SPAN.sub(lambda found: " " * len(found.group()), text)
 
 
+# 숫자 뒤에 붙을 수 있는 한글. 조사, 단위, 서술격 어미다. 이것 말고 다른
+# 한글이 바로 붙어 있으면 숫자가 아니라 깨진 낱말이다. whisper 가 "집에서는"
+# 을 "12선은"으로 흘렸고, 그 12 가 MRI 수치로 올라갔다.
+#
+# 실제 전사에서 본 것을 모아 둔 목록이라 완전하지 않다. 새 어미가 나오면
+# 멀쩡한 수치가 지워지므로, 수치가 빠지는 일이 생기면 여기부터 본다.
+_NUMBER_TAIL = (
+    "이가은는을를에의도과와로랑만부까나든"
+    "점번개명초분시년월일주달회알정씩대배차"
+    "였됐됩입쯤여"
+)
+_BROKEN_NUMBER = re.compile(rf"\d+(?=[가-힣])(?!\d*[{_NUMBER_TAIL}])")
+
+
+def mask_broken_numbers(text: str) -> str:
+    """깨진 낱말 속 숫자를 지운다. 검사 수치를 셀 때만 쓴다."""
+    return _BROKEN_NUMBER.sub(lambda found: " " * len(found.group()), text)
+
+
 def mask_periods(text: str) -> str:
     """기간과 횟수 자리를 공백으로 바꾼다. 검사 수치를 셀 때만 쓴다.
 
