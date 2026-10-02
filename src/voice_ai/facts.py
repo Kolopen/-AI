@@ -20,6 +20,8 @@ from .models import Role, Utterance
 from .roles import split_sentences
 from .terminology import Terminology
 from .schedule import mask_dates, mask_periods
+from .scores import Score
+from .scores import extract as extract_scores
 from .timeline import group_by_time, has_marker
 from .terms import TermCorrection, corrected_text, phonetic_similarity
 
@@ -108,6 +110,8 @@ class Facts:
     normal: list[str] = field(default_factory=list)
     # 의사가 "아직 아니다"라고 말한 항목. 진단도 정상도 아니다.
     unconfirmed: list[str] = field(default_factory=list)
+    # 점수로 말한 검사. 이름 없이 오므로 사전이 아니라 "점" 단위로 잡는다.
+    scores: list[Score] = field(default_factory=list)
     lifestyle: list[str] = field(default_factory=list)
 
 
@@ -261,4 +265,5 @@ def extract(
                 facts.lifestyle.append(target)
 
     facts.diagnoses.sort(key=lambda d: d[1])
+    facts.scores = extract_scores(utterances, roles, terms)
     return facts

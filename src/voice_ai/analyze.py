@@ -347,8 +347,9 @@ def main(argv: list[str] | None = None) -> int:
         print(f"  [{pair.question_at_ms // 1000}초] ({pair.asked_by.value}) {pair.question}")
         print(f"        -> {pair.answer[:80]}")
 
-    if any([facts.measurements, facts.diagnoses, facts.normal, facts.unconfirmed,
-            facts.drugs, facts.schedule, facts.duration, facts.lifestyle]):
+    if any([facts.measurements, facts.scores, facts.diagnoses, facts.normal,
+            facts.unconfirmed, facts.drugs, facts.schedule, facts.duration,
+            facts.lifestyle]):
         print("\n핵심 내용")
         if facts.measurements:
             print("  [검사 수치]")
@@ -364,6 +365,15 @@ def main(argv: list[str] | None = None) -> int:
                 for when, values in m.by_time.items():
                     print(f"    {'':4} {when:6} {' / '.join(values)}")
                 print(f"    {'':4} └ [{stamp}] {apply_corrections(m.quote, corrections)}")
+        if facts.scores:
+            print("  [점수]")
+            for sc in facts.scores:
+                stamp = f"{sc.start_ms // 60000:02d}:{sc.start_ms // 1000 % 60:02d}"
+                value = f"{sc.value}점" + (f" / {sc.maximum}점 만점" if sc.maximum else "")
+                mark = "  (검사명 추정)" if sc.inferred else ""
+                print(f"    {sc.name}{mark}")
+                print(f"    {'':4} {sc.when:6} {value}")
+                print(f"    {'':4} └ [{stamp}] {apply_corrections(sc.quote, corrections)}")
         if facts.diagnoses:
             print("  [진단·소견]")
             print(f"    {', '.join(name for name, _ in facts.diagnoses)}")
