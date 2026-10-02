@@ -367,13 +367,23 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"    {'':4} └ [{stamp}] {apply_corrections(m.quote, corrections)}")
         if facts.scores:
             print("  [점수]")
+            # 한 문장에서 같은 시점으로 나온 점수는 한 줄로 모은다. 전사가
+            # "만점"을 흘리면("30점 안에 26점") 눈금과 값이 따로 떨어져 측정이
+            # 두 번 있었던 것처럼 보인다. 어느 쪽이 만점인지 모를 때는 둘 다
+            # 보여주고 판단은 근거 문장에 맡긴다.
+            grouped: dict[tuple, list] = {}
             for sc in facts.scores:
-                stamp = f"{sc.start_ms // 60000:02d}:{sc.start_ms // 1000 % 60:02d}"
-                value = f"{sc.value}점" + (f" / {sc.maximum}점 만점" if sc.maximum else "")
-                mark = "  (검사명 추정)" if sc.inferred else ""
-                print(f"    {sc.name}{mark}")
-                print(f"    {'':4} {sc.when:6} {value}")
-                print(f"    {'':4} └ [{stamp}] {apply_corrections(sc.quote, corrections)}")
+                grouped.setdefault((sc.name, sc.inferred, sc.when, sc.start_ms), []).append(sc)
+            for (name, inferred, when, start_ms), group in grouped.items():
+                stamp = f"{start_ms // 60000:02d}:{start_ms // 1000 % 60:02d}"
+                values = " / ".join(
+                    f"{sc.value}점" + (f" ({sc.maximum}점 만점)" if sc.maximum else "")
+                    for sc in group
+                )
+                mark = "  (검사명 추정)" if inferred else ""
+                print(f"    {name}{mark}")
+                print(f"    {'':4} {when:6} {values}")
+                print(f"    {'':4} └ [{stamp}] {apply_corrections(group[0].quote, corrections)}")
         if facts.diagnoses:
             print("  [진단·소견]")
             print(f"    {', '.join(name for name, _ in facts.diagnoses)}")
