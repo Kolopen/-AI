@@ -110,6 +110,25 @@ pip install -e ".[transcribe,dev]"
 ```
 </details>
 
+### 컴퓨터를 껐다 켠 뒤
+
+설치는 한 번이면 되고, 이후에는 네 줄이다.
+
+```bash
+cd ~/-AI
+source .venv/bin/activate
+git pull origin claude/exciting-johnson-nv3z94
+pytest -q
+```
+
+`pytest` 가 전부 통과하면 준비가 끝난 것이다. 못 찾겠으면 저장소와 모델
+위치를 이렇게 찾는다.
+
+```bash
+find ~ -maxdepth 5 -type d -name "-AI"
+find ~ -maxdepth 4 -type d -name "sherpa-onnx-*"
+```
+
 ## 전사 준비
 
 모델 두 개를 받는다. 역시 한 번만 하면 된다.
