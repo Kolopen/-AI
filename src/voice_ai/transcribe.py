@@ -100,8 +100,13 @@ def _split_long(samples: np.ndarray, max_samples: int) -> list[tuple[int, np.nda
 ENGINE_FILES = {
     "sensevoice": ("model", "tokens"),
     "moonshine": ("encoder", "decoder", "tokens"),
+    "whisper": ("encoder", "decoder", "tokens"),
     "zipformer": ("encoder", "decoder", "joiner", "tokens"),
 }
+
+# whisper 는 30초 창으로 돌아간다. 그보다 짧게 끊으면 남는 자리를 묵음으로
+# 채워 넣고도 같은 시간을 쓰므로, 짧게 끊을수록 느려지기만 한다.
+WHISPER_WINDOW_SECONDS = 30.0
 
 
 def build_recognizer(
@@ -120,6 +125,7 @@ def build_recognizer(
     SenseVoice는 다국어라 한국어를 못 박아야 한다. 언어를 비워 두면 자동 감지에
     맡기게 되는데, 한국어 진료 녹음이 통째로 중국어·광둥어로 인식된 적이 있다.
     zipformer-korean과 moonshine-tiny-ko는 한국어 전용이라 그 인자가 없다.
+    whisper 는 다국어라 SenseVoice 와 같은 이유로 언어를 못 박는다.
     """
     if engine not in ENGINE_FILES:
         raise ValueError(
@@ -157,6 +163,15 @@ def build_recognizer(
             decoder=str(decoder),
             tokens=str(tokens),
             num_threads=num_threads,
+        )
+    if engine == "whisper":
+        return sherpa_onnx.OfflineRecognizer.from_whisper(
+            encoder=str(encoder),
+            decoder=str(decoder),
+            tokens=str(tokens),
+            num_threads=num_threads,
+            language=language,
+            task="transcribe",
         )
     if engine == "zipformer":
         return sherpa_onnx.OfflineRecognizer.from_transducer(
@@ -337,8 +352,8 @@ def main(argv: list[str] | None = None) -> int:
         help="전사 엔진. sensevoice는 다국어, moonshine과 zipformer는 한국어 전용 모델이 있다.",
     )
     parser.add_argument("--model", type=Path, help="sensevoice: model.onnx")
-    parser.add_argument("--encoder", type=Path, help="moonshine/zipformer: encoder")
-    parser.add_argument("--decoder", type=Path, help="moonshine/zipformer: decoder")
+    parser.add_argument("--encoder", type=Path, help="moonshine/whisper/zipformer: encoder")
+    parser.add_argument("--decoder", type=Path, help="moonshine/whisper/zipformer: decoder")
     parser.add_argument("--joiner", type=Path, help="zipformer: joiner")
     parser.add_argument("--tokens", type=Path, required=True, help="tokens.txt")
     parser.add_argument("--vad", type=Path, help="silero_vad.onnx (화자분리를 안 쓸 때)")

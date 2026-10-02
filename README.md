@@ -159,6 +159,7 @@ SenseVoice는 MIT 라이선스이고 비자기회귀 구조라 Whisper Large보�
 | `sensevoice` | `sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17` | 다국어, 비자기회귀 |
 | `moonshine` | `sherpa-onnx-moonshine-tiny-ko-quantized-2026-02-27` | 한국어 전용, 인코더·디코더 |
 | `zipformer` | `sherpa-onnx-zipformer-korean-2024-06-24` | 한국어 전용, transducer |
+| `whisper` | `sherpa-onnx-whisper-turbo` 등 | 다국어, 인코더·디코더 |
 
 압축을 풀면 나오는 파일 이름은 엔진마다 다르다. 받고 나서 `ls`로 확인하는
 편이 확실하지만, 기준은 이렇다.
@@ -171,6 +172,18 @@ zipformer   encoder-epoch-99-avg-1.int8.onnx
             decoder-epoch-99-avg-1.onnx        ← 디코더만 int8 이 아니다
             joiner-epoch-99-avg-1.int8.onnx    tokens.txt
 ```
+
+whisper 는 받는 자리가 다르다. 크기 순으로 `tiny`, `base`, `small`, `medium`,
+`turbo`, `large-v3` 가 있고, 한국어는 큰 쪽이 확실히 낫다. `turbo` 가
+large-v3 의 속도 개선판이라 품질 대비 쓸 만하다.
+
+```bash
+curl -L -O https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-whisper-turbo.tar.bz2
+tar -xf sherpa-onnx-whisper-turbo.tar.bz2
+```
+
+30초 창으로 도는 구조라 `--max-chunk` 를 짧게 줘도 빨라지지 않는다. 남는
+자리를 묵음으로 채우고 같은 시간을 쓴다.
 
 102초짜리 실제 진료 녹음으로 세 엔진을 같은 설정(`--speakers 3 --max-chunk 8`)
 으로 돌려 견줬다. **기본값은 sensevoice 다.**

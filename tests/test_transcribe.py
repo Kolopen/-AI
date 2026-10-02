@@ -256,7 +256,7 @@ def test_unknown_engine_names_the_choices():
     from voice_ai.transcribe import build_recognizer
 
     with pytest.raises(ValueError, match="zipformer"):
-        build_recognizer("whisper", tokens=Path("t.txt"))
+        build_recognizer("paraformer", tokens=Path("t.txt"))
 
 
 def test_missing_model_file_is_named(tmp_path):
