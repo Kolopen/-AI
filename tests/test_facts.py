@@ -202,3 +202,64 @@ def test_한_문장에_날짜와_수치가_같이_있어도_수치만_남는다(
     )
 
     assert [(m.test, m.values) for m in found.measurements] == [("간수치", ["67"])]
+
+
+def test_아니라고_한_진단은_진단이_아니다():
+    # "치매라고 진단하지는 않습니다"를 진단에 올리면 받지도 않은 진단이 남는다.
+    found = extract(
+        [Utterance("D", 0, 9_000, "점수 하나만으로 치매라고 진단하지는 않습니다")],
+        ROLES,
+        terminology.load("신경과"),
+    )
+
+    assert found.diagnoses == []
+    assert found.unconfirmed == ["치매"]
+
+
+def test_아니라고_한_항목을_정상으로_올리지도_않는다():
+    # "아직 아니다"와 "괜찮다"는 다르다. 정상으로 올리면 거짓 안심이 된다.
+    found = extract(
+        [Utterance("D", 0, 9_000, "치매로 확진된 것은 아닙니다")],
+        ROLES,
+        terminology.load("신경과"),
+    )
+
+    assert found.normal == []
+
+
+def test_검사_이름에_붙은_숫자는_수치가_아니다():
+    neurology = terminology.load("신경과")
+    found = extract(
+        [Utterance("D", 0, 9_000, "혈액검사에서 비타민 B12 수치가 정상 범위였습니다")],
+        ROLES,
+        neurology,
+    )
+
+    assert all("12" not in m.values for m in found.measurements)
+
+
+def test_검사_이름에_든_약_이름은_약이_아니다():
+    neurology = terminology.load("신경과")
+    found = extract(
+        [Utterance("D", 0, 9_000, "혈액검사에서 비타민 B12 수치가 정상 범위였습니다")],
+        ROLES,
+        neurology,
+    )
+
+    assert "비타민" not in found.drugs
+
+
+def test_다음_방문까지의_간격은_처방_기간이_아니다():
+    found = extract(
+        [Utterance("D", 0, 9_000, "4주 뒤에 보겠습니다")], ROLES, TERMS
+    )
+
+    assert found.duration == []
+
+
+def test_처방_기간은_그대로_남는다():
+    found = extract(
+        [Utterance("D", 0, 9_000, "간보호제 두 달분 처방해 드릴게요")], ROLES, TERMS
+    )
+
+    assert found.duration == ["두 달분"]

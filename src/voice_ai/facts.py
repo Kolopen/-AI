@@ -19,11 +19,13 @@ from dataclasses import dataclass, field
 from .models import Role, Utterance
 from .roles import split_sentences
 from .terminology import Terminology
-from .schedule import mask_dates
+from .schedule import mask_dates, mask_periods
 from .timeline import group_by_time, has_marker
 from .terms import TermCorrection, corrected_text, phonetic_similarity
 
-_NUMBER = re.compile(r"\d+")
+# 영문자에 붙은 숫자는 검사 이름의 일부다. "비타민 B12"의 12 는 수치가 아니다.
+# 앞자리를 막으면 뒷자리부터 다시 걸리므로("b12" 의 2) 숫자도 함께 막는다.
+_NUMBER = re.compile(r"(?<![A-Za-z0-9])\d+")
 
 # "술도 줄이셔야", "체중 줄이시면", "허리를 줄이셔야"
 # -시- 는 어미와 만나면 "셔"로 줄어든다(줄이시어야 → 줄이셔야). 둘 다 받아야 한다.
@@ -38,11 +40,19 @@ _SCHEDULE = re.compile(
     r"|아침저녁|하루\s*[한두세네\d]\s*끼|식후|식전|자기\s*전|매일"
 )
 
-# 처방 기간.
-_DURATION = re.compile(r"(?:[\d]+|한|두|세|네|다섯|여섯|열)\s*(?:달|개월|주일|주)\s*(?:분|치)?")
+# 처방 기간. 뒤·후가 붙으면 다음 방문까지의 간격이지 처방 기간이 아니다.
+# "4주 뒤에 보겠습니다"가 4주치 처방으로 잡히던 자리다.
+_DURATION = re.compile(
+    r"(?:[\d]+|한|두|세|네|다섯|여섯|열)\s*(?:달|개월|주일|주)\s*(?:분|치)?(?!\s*(?:뒤|후))"
+)
 
 # 이상이 없다고 말한 항목. 진단으로 올리면 없는 병이 기록에 남는다.
 _NORMAL = re.compile(r"괜찮|이상\s*없|문제\s*없|없으세|없어요")
+
+# 아직 아니라고 말한 항목. "치매라고 진단하지는 않습니다" 를 진단에 올리면
+# 받지도 않은 진단이 기록에 남는다. 그렇다고 정상으로 올릴 수도 없다.
+# 의사가 한 말은 "아직 아니다" 이지 "괜찮다" 가 아니다.
+_UNCONFIRMED = re.compile(r"아니|않")
 
 # 용어 뒤 이만큼 안에서 "괜찮다"는 말이 나오면 그 항목을 가리킨 것으로 본다.
 _NORMAL_WINDOW = 25
@@ -96,6 +106,8 @@ class Facts:
     diagnoses: list[tuple[str, int]] = field(default_factory=list)
     # 의사가 "괜찮다"고 말한 항목. 진단과 섞으면 없는 병이 기록에 남는다.
     normal: list[str] = field(default_factory=list)
+    # 의사가 "아직 아니다"라고 말한 항목. 진단도 정상도 아니다.
+    unconfirmed: list[str] = field(default_factory=list)
     lifestyle: list[str] = field(default_factory=list)
 
 
@@ -108,6 +120,14 @@ def _doctor_sentences(
         if roles.get(utterance.speaker_tag) is Role.DOCTOR
         for sentence in split_sentences(utterance.text)
     ]
+
+
+def _inside_test(drug: str, compact: str, terms: Terminology) -> bool:
+    """약 이름이 같은 자리에 나온 검사 이름에 통째로 들어 있는지 본다."""
+    folded = compact.casefold()
+    return any(
+        test != drug and drug in test and test.casefold() in folded for test in terms.tests
+    )
 
 
 def extract(
@@ -141,18 +161,19 @@ def extract(
     for utterance in utterances:
         if roles.get(utterance.speaker_tag) is not Role.DOCTOR:
             continue
-        compact = utterance.text.replace(" ", "")
+        compact = utterance.text.replace(" ", "").casefold()
         named = next(
-            (t for t in sorted(terms.tests, key=len, reverse=True) if t in compact), None
+            (t for t in sorted(terms.tests, key=len, reverse=True) if t.casefold() in compact),
+            None,
         )
         # 이름은 숫자가 없는 구간에서도 기억해 둔다. "간 수치가 좀 높죠" 처럼
         # 이름만 대고 수치는 다음 숨에 말하는 일이 흔하다.
         if named:
             last_test, last_at = named, utterance.start_ms
 
-        # 날짜와 시각의 숫자는 검사 수치가 아니다. "10월 20일에 오세요"가
-        # 10, 20 두 개의 수치로 잡히던 자리다.
-        spoken = mask_dates(utterance.text)
+        # 날짜·시각·기간의 숫자는 검사 수치가 아니다. "10월 20일에 오세요"가
+        # 10, 20 두 개의 수치로, "4주 뒤에 보겠습니다"가 4로 잡히던 자리다.
+        spoken = mask_periods(mask_dates(utterance.text))
         numbers = _NUMBER.findall(spoken)
         if not numbers:
             continue
@@ -172,7 +193,7 @@ def extract(
         source, borrowed = spoken, False
         if not has_marker(source) and alternate:
             nearby = " ".join(
-                mask_dates(other.text)
+                mask_periods(mask_dates(other.text))
                 for other in alternate
                 if min(other.end_ms, utterance.end_ms) - max(other.start_ms, utterance.start_ms) > 0
             )
@@ -203,12 +224,18 @@ def extract(
             after = compact[position + len(condition) : position + len(condition) + _NORMAL_WINDOW]
             if _NORMAL.search(after):
                 facts.normal.append(condition)
+            elif _UNCONFIRMED.search(after):
+                facts.unconfirmed.append(condition)
             else:
                 facts.diagnoses.append((condition, utterance.start_ms))
 
         for drug in terms.drugs:
-            if drug in compact and drug not in facts.drugs:
-                facts.drugs.append(drug)
+            if drug not in compact or drug in facts.drugs:
+                continue
+            # "비타민 B12 수치"의 비타민은 약이 아니라 검사 이름의 일부다.
+            if _inside_test(drug, compact, terms):
+                continue
+            facts.drugs.append(drug)
         for match in _SCHEDULE.finditer(sentence):
             value = " ".join(match.group().split())
             if value not in facts.schedule:

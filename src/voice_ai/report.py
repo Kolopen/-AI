@@ -28,8 +28,13 @@ _SCHEDULE = re.compile(
     r"|매일|아침|점심|저녁|식후|식전|자기\s*전|하나씩|한\s*알씩"
 )
 
-# 처방 기간.
-_DURATION = re.compile(r"(\d+|한|두|세|네|다섯|여섯|열)\s*(달|개월|주일|주|일)\s*(분|치|씩)?")
+# 처방 기간. "일"은 숫자와 분·치가 둘 다 붙어야 센다. "불편한 일이", "잊어버린
+# 일" 처럼 관형사 뒤의 의존명사 "일"이 "한 일"로 걸려 들어오기 때문이다.
+# 뒤·후가 붙으면 다음 방문까지의 간격이지 처방 기간이 아니다.
+_DURATION = re.compile(
+    r"(?:\d+|한|두|세|네|다섯|여섯|열)\s*(?:달|개월|주일|주)\s*(?:분|치|씩)?(?!\s*(?:뒤|후))"
+    r"|\d+\s*일\s*(?:분|치)"
+)
 
 # 다음 방문.
 _NEXT_VISIT = re.compile(
@@ -76,11 +81,24 @@ def _collect(
     return "\n".join(lines)
 
 
+def _inside_test(drug: str, spoken: str, test_terms: frozenset[str]) -> bool:
+    """약 이름이 같은 진료에 나온 검사 이름에 통째로 들어 있는지 본다.
+
+    "비타민 B12 수치가 정상"의 비타민은 처방한 약이 아니라 검사 이름이다.
+    약품란에 올리면 처방하지 않은 약이 리포트에 남는다.
+    """
+    return any(
+        test != drug and drug in test and re.sub(r"\s+", "", test).casefold() in spoken
+        for test in test_terms
+    )
+
+
 def build_report_draft(
     utterances: list[Utterance],
     roles: dict[str, Role],
     *,
     drug_terms: frozenset[str] = frozenset(),
+    test_terms: frozenset[str] = frozenset(),
     consult_date: dt.date | None = None,
 ) -> ReportDraft:
     """의사 발언에서 리포트 항목별로 관련 문장을 발췌한다.
@@ -100,8 +118,13 @@ def build_report_draft(
     ]
 
     # 전사는 "간 보호제", 사전은 "간보호제"처럼 띄어쓰기가 어긋나므로 공백을 지우고 맞춘다.
-    spoken = re.sub(r"\s+", "", " ".join(sentence for _, sentence in pairs))
-    names = sorted(term for term in drug_terms if re.sub(r"\s+", "", term) in spoken)
+    spoken = re.sub(r"\s+", "", " ".join(sentence for _, sentence in pairs)).casefold()
+    names = sorted(
+        term
+        for term in drug_terms
+        if re.sub(r"\s+", "", term).casefold() in spoken
+        and not _inside_test(term, spoken, test_terms)
+    )
 
     visit = (
         find_next_visit(pairs, consult_date=consult_date) if consult_date is not None else None

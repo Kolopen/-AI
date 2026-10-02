@@ -55,9 +55,22 @@ _DATE_SPAN = re.compile(
 )
 
 
+# 단위가 붙은 숫자. 기간과 횟수이지 검사 수치가 아니다. "4주 뒤에 보겠습니다"
+# 의 4 가 MRI 수치로 올라가던 자리다.
+_PERIOD_SPAN = re.compile(r"\d+\s*(?:주일|주|일|달|개월|년|시간|분|초|번|회|끼)")
+
+
 def mask_dates(text: str) -> str:
     """날짜와 시각 자리를 공백으로 바꾼다. 길이는 그대로 둬서 위치가 어긋나지 않게 한다."""
     return _DATE_SPAN.sub(lambda found: " " * len(found.group()), text)
+
+
+def mask_periods(text: str) -> str:
+    """기간과 횟수 자리를 공백으로 바꾼다. 검사 수치를 셀 때만 쓴다.
+
+    처방 기간을 뽑을 때 쓰면 뽑을 것이 사라지므로 날짜 가리기와 나눠 둔다.
+    """
+    return _PERIOD_SPAN.sub(lambda found: " " * len(found.group()), text)
 
 
 @dataclass

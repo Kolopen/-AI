@@ -94,7 +94,7 @@ def analyze_without_speakers(
         qa_pairs=pairs,
         unasked_question_ids=unasked,
         report_draft=build_report_draft(
-            labelled, roles, drug_terms=terms.drugs, consult_date=consult_date
+            labelled, roles, drug_terms=terms.drugs, test_terms=terms.tests, consult_date=consult_date
         ),
         warnings=warnings,
         labelled=labelled,
@@ -220,7 +220,7 @@ def analyze_with_speakers(
         qa_pairs=pairs,
         unasked_question_ids=unasked,
         report_draft=build_report_draft(
-            utterances, roles, drug_terms=terms.drugs, consult_date=consult_date
+            utterances, roles, drug_terms=terms.drugs, test_terms=terms.tests, consult_date=consult_date
         ),
         warnings=warnings,
         labelled=utterances,
@@ -347,8 +347,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"  [{pair.question_at_ms // 1000}초] ({pair.asked_by.value}) {pair.question}")
         print(f"        -> {pair.answer[:80]}")
 
-    if any([facts.measurements, facts.diagnoses, facts.normal, facts.drugs,
-            facts.schedule, facts.duration, facts.lifestyle]):
+    if any([facts.measurements, facts.diagnoses, facts.normal, facts.unconfirmed,
+            facts.drugs, facts.schedule, facts.duration, facts.lifestyle]):
         print("\n핵심 내용")
         if facts.measurements:
             print("  [검사 수치]")
@@ -370,6 +370,9 @@ def main(argv: list[str] | None = None) -> int:
         if facts.normal:
             print("  [이상 없다고 한 항목]")
             print(f"    {', '.join(facts.normal)}")
+        if facts.unconfirmed:
+            print("  [아직 아니라고 한 항목]")
+            print(f"    {', '.join(facts.unconfirmed)}")
         if facts.drugs or facts.schedule or facts.duration:
             print("  [복용]")
             row = [", ".join(facts.drugs) or "약품 미확인"]

@@ -152,3 +152,30 @@ def test_같은_문장의_처방_기간은_남는다():
     draft = build_report_draft(utterances, {"1": Role.DOCTOR}, consult_date=dt.date(2026, 9, 30))
     assert "두 달분" in draft.medication_notes
     assert draft.next_visit_at == "2026-10-20"
+
+
+def test_관형사_뒤의_일은_처방_기간이_아니다():
+    # "불편한 일이"의 "한 일"이 처방 기간으로 잡히던 자리다.
+    utterances = [
+        Utterance(speaker_tag="1", text="기억력 때문에 불편한 일이 있었나요?", start_ms=0, end_ms=3000),
+    ]
+    draft = build_report_draft(utterances, {"1": Role.DOCTOR})
+    assert draft.medication_notes == ""
+
+
+def test_검사_이름에_든_약_이름은_약품란에_넣지_않는다():
+    utterances = [
+        Utterance(
+            speaker_tag="1",
+            text="혈액검사에서 비타민 B12 수치가 정상 범위였습니다.",
+            start_ms=0,
+            end_ms=3000,
+        ),
+    ]
+    draft = build_report_draft(
+        utterances,
+        {"1": Role.DOCTOR},
+        drug_terms=frozenset({"비타민"}),
+        test_terms=frozenset({"비타민B12", "혈액검사"}),
+    )
+    assert draft.medication_name == ""
