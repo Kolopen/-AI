@@ -898,6 +898,13 @@ def main(argv: list[str] | None = None) -> int:
         help="이만큼 조용하면 구간을 끊는다(초). 짧을수록 자주 끊는다.",
     )
     args = parser.parse_args(argv)
+    # 셸에서 찾은 경로를 변수로 넘기다 보면 빈 값이 그대로 들어온다. 빈
+    # 경로는 현재 폴더로 읽혀서 "디렉터리입니다" 라는 엉뚱한 예외가 난다.
+    if not str(args.audio).strip() or str(args.audio) == ".":
+        parser.error("녹음 파일 경로가 비어 있습니다. 파일을 찾았는지 확인하세요.")
+    if not args.audio.is_file():
+        parser.error(f"녹음 파일이 없습니다: {args.audio}")
+
     if args.max_chunk is None:
         args.max_chunk = default_max_chunk(args.engine)
     if args.min_chunk is None:

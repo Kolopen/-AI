@@ -422,11 +422,13 @@ def test_faster_whisper_does_not_need_tokens(monkeypatch, capsys):
     assert "--tokens" not in complaint
 
 
-def test_sensevoice_still_needs_tokens(capsys):
+def test_sensevoice_still_needs_tokens(capsys, tmp_path):
     from voice_ai import transcribe as module
 
+    audio = tmp_path / "x.m4a"
+    audio.touch()
     with pytest.raises(SystemExit):
-        module.main(["x.m4a", "--engine", "sensevoice", "--model", "m.onnx",
+        module.main([str(audio), "--engine", "sensevoice", "--model", "m.onnx",
                      "--vad", "v.onnx"])
 
     complaint = capsys.readouterr().err.strip().splitlines()[-1]
@@ -713,3 +715,24 @@ def test_nothing_is_retagged_when_no_turn_matches(monkeypatch, tmp_path):
     )
 
     assert marked == chunks
+
+
+def test_an_empty_audio_path_says_so(capsys):
+    """셸에서 찾은 경로가 비면 그대로 넘어온다. 빈 경로는 현재 폴더로 읽힌다."""
+    from voice_ai.transcribe import main
+
+    with pytest.raises(SystemExit):
+        main(["", "--engine", "faster-whisper", "--model", "x",
+              "--segmentation", "/tmp/a", "--embedding", "/tmp/b"])
+
+    assert "녹음 파일 경로가 비어 있습니다" in capsys.readouterr().err
+
+
+def test_a_missing_audio_file_says_so(capsys, tmp_path):
+    from voice_ai.transcribe import main
+
+    with pytest.raises(SystemExit):
+        main([str(tmp_path / "없음.m4a"), "--engine", "faster-whisper", "--model", "x",
+              "--segmentation", "/tmp/a", "--embedding", "/tmp/b"])
+
+    assert "녹음 파일이 없습니다" in capsys.readouterr().err
