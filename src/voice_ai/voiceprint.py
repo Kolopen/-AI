@@ -25,6 +25,12 @@ SAMPLE_RATE = 16000
 # 낮추면 환자가 매니저로 고정되어 역할이 통째로 뒤바뀌므로 보수적으로 잡는다.
 MATCH_THRESHOLD = 0.55
 
+# 구간 하나만 보고 맞출 때 쓰는 기준. 덩어리 전체보다 짧아 성문이 흔들리므로
+# 더 높게 잡는다. 여기서 틀리면 의사 발언이 매니저 발언으로 기록된다.
+TURN_MATCH_THRESHOLD = 0.6
+# 이보다 짧은 구간은 판정하지 않는다. 1초 미만은 성문이 사실상 잡음이다.
+MIN_TURN_SECONDS = 1.0
+
 # 화자 하나를 대표할 오디오 길이. 너무 짧으면 성문이 흔들리고, 길다고 더
 # 좋아지지도 않는다. 긴 발언부터 모아 이만큼 채운다.
 PROFILE_SECONDS = 8.0
@@ -133,3 +139,39 @@ def find_manager(
         return None, {}
     best = max(scores, key=lambda tag: scores[tag])
     return (best if scores[best] >= threshold else None), scores
+
+
+def manager_turns(
+    audio: np.ndarray,
+    turns: list[tuple[str, int, int]],
+    voiceprint: Voiceprint,
+    extractor,
+    *,
+    threshold: float = TURN_MATCH_THRESHOLD,
+    min_seconds: float = MIN_TURN_SECONDS,
+) -> list[bool]:
+    """구간마다 따로 매니저인지 본다. `turns` 와 같은 길이로 돌려준다.
+
+    화자 덩어리째로 맞추면 못 푸는 자리가 있다. 실제 녹음에서 화자분리가
+    매니저를 의사 덩어리에 합쳐 버렸다. 그 덩어리를 통째로 매니저로 찍으면
+    의사 발언이 전부 매니저 발언이 된다. 가장 위험한 방향이다.
+
+    구간마다 재면 합쳐진 덩어리가 갈린다. 대신 구간 하나는 짧아서 성문이
+    흔들리므로, 짧은 것은 아예 판정하지 않고 기준도 높게 잡는다. 애매하면
+    매니저가 아닌 쪽으로 둔다. 매니저를 놓치면 질문 하나를 못 줍지만,
+    의사를 매니저로 찍으면 리포트가 틀린다.
+    """
+    reference = np.asarray(voiceprint.vector, dtype=np.float32)
+    minimum = int(min_seconds * 1000)
+    found: list[bool] = []
+
+    for _, start_ms, end_ms in turns:
+        if end_ms - start_ms < minimum:
+            found.append(False)
+            continue
+        spoken = audio[int(start_ms * SAMPLE_RATE / 1000) : int(end_ms * SAMPLE_RATE / 1000)]
+        if len(spoken) == 0:
+            found.append(False)
+            continue
+        found.append(similarity(embed(spoken, extractor), reference) >= threshold)
+    return found

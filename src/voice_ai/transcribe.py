@@ -21,6 +21,10 @@ import numpy as np
 
 SAMPLE_RATE = 16000
 
+# 성문으로 떼어낸 매니저 구간에 붙이는 화자 태그. 화자분리가 매니저를 다른
+# 사람과 한 덩이로 묶었을 때, 이 태그로 갈라 나온다.
+MANAGER_TAG = "manager"
+
 
 def load_audio(path: Path, sample_rate: int = SAMPLE_RATE) -> np.ndarray:
     """어떤 형식이든 16kHz 모노 float32로 읽는다."""
@@ -753,24 +757,41 @@ def _mark_manager(
     embedding_model: Path,
     num_threads: int,
 ) -> list[dict]:
-    """등록된 성문과 닮은 화자를 찾아 매니저로 표시한다.
+    """등록된 성문과 닮은 구간을 매니저로 떼어낸다.
 
-    못 찾으면 아무것도 바꾸지 않는다. 억지로 배정하면 환자가 매니저로 고정되어
-    역할이 통째로 뒤바뀐다.
+    구간마다 따로 본다. 덩어리째 맞추면 화자분리가 매니저를 의사 쪽에 합쳐
+    버린 녹음에서 의사 발언이 전부 매니저 발언이 된다.
+
+    찾은 구간은 화자 태그를 MANAGER_TAG 로 바꾼다. 합쳐진 덩어리에서 떨어져
+    나오므로 뒷단은 화자가 하나 늘어난 것으로만 보면 된다.
+
+    못 찾으면 아무것도 바꾸지 않는다. 억지로 배정하면 역할이 통째로 뒤바뀐다.
     """
-    from .voiceprint import Voiceprint, build_extractor, find_manager
+    from .voiceprint import Voiceprint, build_extractor, manager_turns
 
     voiceprint = Voiceprint.load(voiceprint_path)
     extractor = build_extractor(embedding_model, num_threads=num_threads)
-    tag, scores = find_manager(audio, turns, voiceprint, extractor)
+    matched = manager_turns(audio, turns, voiceprint, extractor)
 
-    rows = "  ".join(f"{speaker} {score}" for speaker, score in sorted(scores.items()))
-    if tag is None:
-        print(f"성문 매칭 실패 ({voiceprint.name}). 유사도: {rows}")
+    spans = [
+        (start_ms, end_ms) for (_, start_ms, end_ms), is_manager in zip(turns, matched) if is_manager
+    ]
+    if not spans:
+        print(f"성문과 닮은 구간을 찾지 못했습니다 ({voiceprint.name}).")
         return chunks
 
-    print(f"매니저 확정: {tag} = {voiceprint.name}. 유사도: {rows}")
-    return [{**chunk, "is_manager": chunk["speaker"] == tag} for chunk in chunks]
+    def from_manager(chunk: dict) -> bool:
+        start = chunk.get("start_ms", 0)
+        return any(start_ms <= start < end_ms for start_ms, end_ms in spans)
+
+    marked = [
+        {**chunk, "speaker": MANAGER_TAG, "is_manager": True} if from_manager(chunk) else chunk
+        for chunk in chunks
+    ]
+    count = sum(1 for chunk in marked if chunk.get("is_manager"))
+    print(f"매니저 확정: {voiceprint.name}. {len(spans)}구간 중 전사 {count}개를 떼어냈습니다.")
+    return marked
+
 
 
 def _print_levels(levels: list[tuple[str, int, int, float]], floor: float) -> None:

@@ -662,3 +662,54 @@ def test_some_noise_is_left_behind_on_purpose():
     cleaned = reduce_noise(audio, noise_profile(audio, [("speaker_00", 0, 1000)]))
 
     assert segment_level(cleaned[2 * SAMPLE_RATE :]) > 0.0
+
+
+def test_only_the_manager_turns_are_retagged(monkeypatch, tmp_path):
+    """합쳐진 덩어리에서 매니저 구간만 떨어져 나와야 한다.
+
+    여기서 범위를 잘못 잡으면 의사 발언이 매니저 발언으로 기록된다.
+    """
+    from voice_ai import transcribe, voiceprint
+
+    monkeypatch.setattr(voiceprint, "build_extractor", lambda *a, **k: None)
+    monkeypatch.setattr(voiceprint, "manager_turns", lambda *a, **k: [False, True, False])
+
+    print_path = tmp_path / "manager.json"
+    voiceprint.Voiceprint(name="김매니저", vector=[1.0, 0.0]).save(print_path)
+
+    turns = [("speaker_00", 0, 2000), ("speaker_00", 2000, 4000), ("speaker_00", 4000, 6000)]
+    chunks = [
+        {"speaker": "speaker_00", "start_ms": 100, "end_ms": 1900, "text": "앞"},
+        {"speaker": "speaker_00", "start_ms": 2100, "end_ms": 3900, "text": "가운데"},
+        {"speaker": "speaker_00", "start_ms": 4100, "end_ms": 5900, "text": "뒤"},
+    ]
+
+    marked = transcribe._mark_manager(
+        np.zeros(6 * SAMPLE_RATE, dtype=np.float32), turns, chunks, print_path, tmp_path, 1
+    )
+
+    assert [c["speaker"] for c in marked] == ["speaker_00", "manager", "speaker_00"]
+    assert [c.get("is_manager", False) for c in marked] == [False, True, False]
+
+
+def test_nothing_is_retagged_when_no_turn_matches(monkeypatch, tmp_path):
+    """매니저가 말을 거의 안 한 진료도 있다. 억지로 배정하지 않는다."""
+    from voice_ai import transcribe, voiceprint
+
+    monkeypatch.setattr(voiceprint, "build_extractor", lambda *a, **k: None)
+    monkeypatch.setattr(voiceprint, "manager_turns", lambda *a, **k: [False])
+
+    print_path = tmp_path / "manager.json"
+    voiceprint.Voiceprint(name="김매니저", vector=[1.0, 0.0]).save(print_path)
+
+    chunks = [{"speaker": "speaker_00", "start_ms": 0, "end_ms": 2000, "text": "네"}]
+    marked = transcribe._mark_manager(
+        np.zeros(2 * SAMPLE_RATE, dtype=np.float32),
+        [("speaker_00", 0, 2000)],
+        chunks,
+        print_path,
+        tmp_path,
+        1,
+    )
+
+    assert marked == chunks
