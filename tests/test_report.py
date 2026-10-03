@@ -179,3 +179,24 @@ def test_검사_이름에_든_약_이름은_약품란에_넣지_않는다():
         test_terms=frozenset({"비타민B12", "혈액검사"}),
     )
     assert draft.medication_name == ""
+
+
+def test_한자어로_말한_간격도_다음_방문이다():
+    """전사가 "4주 뒤에"를 "사주 뒤에"로 내놓는다."""
+    draft = build_report_draft(
+        [Utterance("D", 113_000, 117_000, "사주 뒤에 보겠습니다 재진 날짜를 확인해 주세요")],
+        {"D": Role.DOCTOR},
+    )
+
+    assert "사주 뒤에" in draft.next_visit_note
+
+
+def test_수치로_말한_약은_리포트에_올라가지_않는다():
+    draft = build_report_draft(
+        [Utterance("D", 0, 9_000, "지난번 혈액검사에서 비타민이 기십 이 점수치가 정상범이었습니다")],
+        {"D": Role.DOCTOR},
+        drug_terms=frozenset({"비타민"}),
+        test_terms=frozenset({"비타민B12", "혈액검사"}),
+    )
+
+    assert draft.medication_name == ""

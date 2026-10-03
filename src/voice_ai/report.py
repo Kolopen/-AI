@@ -16,6 +16,7 @@ import re
 
 from .models import ReportDraft, Role, Utterance
 from .roles import split_sentences
+from .facts import is_lab_value
 from .schedule import find_next_visit, mask_dates
 
 # 검사 수치와 진단. 숫자가 있거나 의학 용어가 있는 의사 문장.
@@ -37,9 +38,11 @@ _DURATION = re.compile(
 )
 
 # 다음 방문.
+# 한자어 수도 받는다. 전사가 "4주 뒤에" 를 "사주 뒤에" 로 내놓는다. 사주나
+# 이주는 다른 뜻이 있지만 뒤·후가 붙으면 기간 말고 읽을 길이 없다.
 _NEXT_VISIT = re.compile(
-    r"(\d+|한|두|세|네|여섯)\s*(달|개월|주|주일|년)\s*(뒤|후|있다가)"
-    r"|재검|다시\s*(오|보|와)|다음에\s*(오|뵈|봐)|다음\s*진료|경과\s*(보|관찰)"
+    r"(\d+|한|두|세|네|여섯|일|이|삼|사|오|육|칠|팔|구|십)\s*(달|개월|주|주일|년)\s*(뒤|후|있다가)"
+    r"|재검|재진|다시\s*(오|보|와)|다음에\s*(오|뵈|봐)|다음\s*진료|경과\s*(보|관찰)"
 )
 
 
@@ -124,6 +127,10 @@ def build_report_draft(
         for term in drug_terms
         if re.sub(r"\s+", "", term).casefold() in spoken
         and not _inside_test(term, spoken, test_terms)
+        # 전사가 검사 이름을 깨뜨리면 위 그물을 빠져나간다. "비타민 B12
+        # 수치" 가 "비타민이 기십 이 점수치" 로 흘러 비타민이 복용 약으로
+        # 올라갔다. 먹지 않는 약이 진료 기록에 남는 자리다.
+        and not is_lab_value(re.sub(r"\s+", "", term).casefold(), spoken)
     )
 
     visit = (

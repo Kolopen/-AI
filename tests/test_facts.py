@@ -278,3 +278,27 @@ def test_깨진_낱말_속_숫자는_수치가_아니다():
     )
 
     assert all("12" not in m.values for m in found.measurements)
+
+
+def test_검사_수치로_말한_약은_복용이_아니다():
+    # 실제 녹음에서 "비타민 B12 수치"가 "비타민이 기십 이 점수치"로 흘렀다.
+    # 검사 이름이 깨져 사전 대조를 빠져나갔고, 남은 "비타민"이 복용 약으로
+    # 리포트에 올라갔다. 먹지 않는 약이 진료 기록에 남는 자리다.
+    facts = extract(
+        [Utterance("D", 0, 9_000, "지난번 혈액검사에서는 비타민이 기십 이 점수치가 정상범이었습니다")],
+        {"D": Role.DOCTOR},
+        terminology.load("신경과"),
+    )
+
+    assert facts.drugs == []
+
+
+def test_수치도_말하고_복용도_말하면_약이다():
+    """한 번이라도 복용으로 말했으면 약이다. 통째로 버리면 진짜 복용이 빠진다."""
+    facts = extract(
+        [Utterance("D", 0, 9_000, "비타민 수치는 정상이고 비타민은 계속 드세요")],
+        {"D": Role.DOCTOR},
+        terminology.load("신경과"),
+    )
+
+    assert "비타민" in facts.drugs

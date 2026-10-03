@@ -134,6 +134,32 @@ def _inside_test(drug: str, compact: str, terms: Terminology) -> bool:
     )
 
 
+# 수치를 말한 것이지 복용이 아니다. 검사 이름이 사전에 그대로 있으면
+# _inside_test 가 잡지만, 전사가 깨지면 그 그물을 빠져나간다. 실제 녹음에서
+# "비타민 B12 수치" 가 "비타민이 기십 이 점수치" 로 흘렀고, 남은 "비타민" 이
+# 복용 약으로 리포트에 올라갔다. 먹지 않는 약이 진료 기록에 남는 자리다.
+#
+# 수치·농도·레벨만 본다. "정상" 까지 넣으면 "혈압약은 정상적으로 드세요" 가
+# 걸려 진짜 복용이 빠진다.
+_LAB_VALUE = re.compile(r"수치|농도|레벨")
+_LAB_WINDOW = 14
+
+
+def is_lab_value(drug: str, compact: str) -> bool:
+    """나온 자리가 모두 수치를 말하는 자리인지.
+
+    한 번이라도 복용으로 말했으면 약이다. "비타민 수치는 정상이고 비타민은
+    계속 드세요" 를 통째로 버리면 진짜 복용이 빠진다.
+    """
+    found = False
+    for match in re.finditer(re.escape(drug), compact):
+        found = True
+        after = compact[match.end() : match.end() + _LAB_WINDOW]
+        if not _LAB_VALUE.search(after):
+            return False
+    return found
+
+
 def extract(
     utterances: list[Utterance],
     roles: dict[str, Role],
@@ -237,7 +263,7 @@ def extract(
             if drug not in compact or drug in facts.drugs:
                 continue
             # "비타민 B12 수치"의 비타민은 약이 아니라 검사 이름의 일부다.
-            if _inside_test(drug, compact, terms):
+            if _inside_test(drug, compact, terms) or is_lab_value(drug, compact):
                 continue
             facts.drugs.append(drug)
         for match in _SCHEDULE.finditer(sentence):
