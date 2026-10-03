@@ -62,6 +62,12 @@ _NEXT_VISIT = re.compile(
 )
 
 
+# findings 는 이미 걸러진 목록인데 _collect 가 같은 목록을 _FINDING 으로 한 번
+# 더 거른다. 그래서 "점수 하나만으로 치매라고 진단하지는 않습니다" 처럼
+# 검사·결과·수치가 없는 결론이 두 번째 체에서 떨어졌다. 두 그물을 합쳐 넘긴다.
+_FINDING_OR_PLAN = re.compile(f"{_FINDING.pattern}|{_PLAN.pattern}")
+
+
 def _stamp(utterance: Utterance) -> str:
     seconds = utterance.start_ms // 1000
     return f"[{seconds // 60:02d}:{seconds % 60:02d}]"
@@ -161,7 +167,7 @@ def build_report_draft(
             next_visit_note = f"{line}\n{next_visit_note}".rstrip()
 
     return ReportDraft(
-        treatment_notes=_collect(findings, _FINDING),
+        treatment_notes=_collect(findings, _FINDING_OR_PLAN),
         medication_name=", ".join(names),
         medication_schedule_note=_collect(pairs, _SCHEDULE, mask=True),
         medication_notes=_collect(pairs, _DURATION, mask=True),
