@@ -86,6 +86,39 @@ def measure_levels(
     ]
 
 
+def noise_floor(audio: np.ndarray, turns: list[tuple[str, int, int]]) -> float:
+    """아무도 말하지 않는 틈의 소리 크기. 그게 잡음이다.
+
+    말소리 크기만으로는 왜 안 들리는지 알 수 없다. 크게 담겼어도 잡음이 같이
+    크면 모델은 묻힌 말을 받아 적지 못한다. 틈을 재면 둘이 갈린다.
+
+    가운데값을 쓴다. 틈에 기침이나 문 닫는 소리가 섞여도 흔들리지 않는다.
+    """
+    gaps: list[float] = []
+    cursor = 0
+    for _, start_ms, end_ms in sorted(turns, key=lambda t: t[1]):
+        if start_ms > cursor:
+            gap = audio[int(cursor * SAMPLE_RATE / 1000) : int(start_ms * SAMPLE_RATE / 1000)]
+            if len(gap) >= SAMPLE_RATE // 10:
+                gaps.append(segment_level(gap))
+        cursor = max(cursor, end_ms)
+
+    tail = audio[int(cursor * SAMPLE_RATE / 1000) :]
+    if len(tail) >= SAMPLE_RATE // 10:
+        gaps.append(segment_level(tail))
+
+    if not gaps:
+        return 0.0
+    return float(np.median(gaps))
+
+
+def signal_to_noise(level: float, floor: float) -> float | None:
+    """말소리가 잡음보다 몇 dB 큰지. 틈이 없어 잴 수 없으면 None."""
+    if floor <= 0.0 or level <= 0.0:
+        return None
+    return float(20 * np.log10(level / floor))
+
+
 def _quietest_point(samples: np.ndarray, target: int, search: int) -> int:
     """target 부근에서 가장 조용한 지점을 찾는다.
 
@@ -671,21 +704,26 @@ def _mark_manager(
     return [{**chunk, "is_manager": chunk["speaker"] == tag} for chunk in chunks]
 
 
-def _print_levels(levels: list[tuple[str, int, int, float]]) -> None:
-    """화자별 소리 크기를 사람이 읽게 찍는다."""
-    print(f"\n구간별 소리 크기 ({len(levels)}구간)")
-    for speaker, start_ms, end_ms, rms in levels:
-        stamp = f"{start_ms // 60000:02d}:{start_ms // 1000 % 60:02d}"
-        seconds = (end_ms - start_ms) / 1000
-        print(f"  [{stamp}] {speaker}  {seconds:5.1f}초  크기 {rms:.4f}")
-
+def _print_levels(levels: list[tuple[str, int, int, float]], floor: float) -> None:
+    """화자별 소리 크기와 잡음 대비를 사람이 읽게 찍는다."""
     by_speaker: dict[str, list[float]] = {}
     for speaker, _, _, rms in levels:
         by_speaker.setdefault(speaker, []).append(rms)
-    print("\n화자별 평균")
+
+    print(f"\n잡음 바닥  {floor:.4f}" if floor > 0 else "\n잡음 바닥  잴 수 없음 (쉬는 틈이 없습니다)")
+    print(f"\n화자별 ({len(levels)}구간)")
     for speaker, values in sorted(by_speaker.items()):
-        print(f"  {speaker}  {sum(values) / len(values):.4f}  ({len(values)}구간)")
-    print("\n사람 말소리는 보통 0.03~0.1 입니다. 한 화자만 유독 낮으면 녹음기 위치 문제입니다.")
+        level = sum(values) / len(values)
+        snr = signal_to_noise(level, floor)
+        margin = f"잡음보다 {snr:5.1f}dB 큼" if snr is not None else "잡음 대비 잴 수 없음"
+        print(f"  {speaker}  크기 {level:.4f}  {margin}  ({len(values)}구간)")
+
+    print(
+        "\n말소리는 보통 0.03~0.1 입니다. 잡음보다 20dB 넘게 크면 깨끗하고,"
+        "\n10dB 아래면 묻혀서 모델이 못 받아 적습니다. 크기는 멀쩡한데 대비가"
+        "\n낮으면 자리를 옮겨도 안 풀리고, 둘 다 멀쩡한데 안 들리면 반향이거나"
+        "\n모델이 그 말투를 못 배운 것입니다."
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -780,18 +818,14 @@ def main(argv: list[str] | None = None) -> int:
         audio = load_audio(args.audio)
         print(f"오디오 {len(audio) / SAMPLE_RATE:.1f}초를 읽었습니다.")
         print("화자를 나누는 중입니다...")
-        _print_levels(
-            measure_levels(
-                audio,
-                diarize(
-                    audio,
-                    segmentation_model=args.segmentation,
-                    embedding_model=args.embedding,
-                    num_speakers=args.speakers,
-                    num_threads=args.threads,
-                ),
-            )
+        turns = diarize(
+            audio,
+            segmentation_model=args.segmentation,
+            embedding_model=args.embedding,
+            num_speakers=args.speakers,
+            num_threads=args.threads,
         )
+        _print_levels(measure_levels(audio, turns), noise_floor(audio, turns))
         return 0
 
     missing = [f"--{name}" for name in ENGINE_FILES[args.engine] if getattr(args, name) is None]

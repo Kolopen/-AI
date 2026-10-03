@@ -561,3 +561,41 @@ def test_levels_are_measured_per_diarized_turn():
     assert [row[0] for row in levels] == ["speaker_00", "speaker_01"]
     assert levels[0][3] == pytest.approx(0.2)
     assert levels[1][3] == pytest.approx(0.01)
+
+
+def test_noise_floor_is_measured_in_the_gaps_between_turns():
+    """말하는 동안이 아니라 아무도 말하지 않는 틈을 재야 잡음이다."""
+    from voice_ai.transcribe import SAMPLE_RATE, noise_floor
+
+    audio = np.full(4 * SAMPLE_RATE, 0.01, dtype=np.float32)
+    audio[: SAMPLE_RATE] = 0.3
+    audio[2 * SAMPLE_RATE : 3 * SAMPLE_RATE] = 0.3
+    turns = [("speaker_00", 0, 1000), ("speaker_01", 2000, 3000)]
+
+    assert noise_floor(audio, turns) == pytest.approx(0.01)
+
+
+def test_a_chair_scrape_in_one_gap_does_not_raise_the_floor():
+    """가운데값을 쓰므로 틈 하나가 시끄러워도 흔들리지 않는다."""
+    from voice_ai.transcribe import SAMPLE_RATE, noise_floor
+
+    audio = np.full(6 * SAMPLE_RATE, 0.01, dtype=np.float32)
+    audio[3 * SAMPLE_RATE : 4 * SAMPLE_RATE] = 0.5
+    turns = [("speaker_00", i * 2000, i * 2000 + 1000) for i in range(3)]
+
+    assert noise_floor(audio, turns) == pytest.approx(0.01)
+
+
+def test_the_floor_cannot_be_measured_without_gaps():
+    from voice_ai.transcribe import SAMPLE_RATE, noise_floor
+
+    audio = np.full(2 * SAMPLE_RATE, 0.05, dtype=np.float32)
+    assert noise_floor(audio, [("speaker_00", 0, 2000)]) == 0.0
+
+
+def test_snr_says_how_far_speech_sits_above_the_noise():
+    from voice_ai.transcribe import signal_to_noise
+
+    assert signal_to_noise(0.1, 0.01) == pytest.approx(20.0)
+    assert signal_to_noise(0.01, 0.01) == pytest.approx(0.0)
+    assert signal_to_noise(0.05, 0.0) is None
