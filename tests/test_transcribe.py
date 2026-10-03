@@ -512,3 +512,28 @@ def test_short_turns_never_reach_the_recognizer():
     turns = [("speaker_00", 0, 1_500)]
 
     assert transcribe_turns(audio, turns, recognizer=Boom(), min_chunk_duration=2.0) == []
+
+
+def test_the_measured_thresholds_separate_the_real_recording():
+    # 실제 녹음 여섯 구간의 값. 숫자를 안 보고 정했다가 한 번 틀렸다.
+    from types import SimpleNamespace
+
+    from voice_ai.transcribe import confident, looks_repeated
+
+    measured = [
+        # 확신도가 -0.37 이라 그 기준은 못 넘는다. 낱말 단위 되풀이가 잡는다.
+        ("환각", -0.37, 2.26, "홍 사장의 발언에 국감장이 술렁이자 조정식의 발언에 "
+                              "국감장이 술렁이자 조정식의 발언에 국감장이 술렁이자 "
+                              "조정식의 발언이 됐어요"),
+        ("환각", -0.80, 0.79, "고속도로 교통정보고 좋습니다"),
+        ("환각", -0.90, 0.86, "애플의 베풍과 이혼은 새 액체에 밥을 먹었습니다"),
+        ("정상", -0.10, 0.62, "감사합니다"),
+        ("정상", -0.18, 0.74, "결국 어디서 찾았을까요"),
+        ("정상", -0.10, 1.37, "지난 검사 점수는 삼십 점 한 점에 이십 육 점이었습니다"),
+    ]
+    for kind, logprob, compression, text in measured:
+        segment = SimpleNamespace(
+            no_speech_prob=0.0, avg_logprob=logprob, compression_ratio=compression
+        )
+        kept = confident(segment) and not looks_repeated(text)
+        assert kept == (kind == "정상"), text[:30]
