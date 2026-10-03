@@ -31,14 +31,17 @@ from .timeline import UNMARKED, group_by_time
 # 12점으로 올라가던 자리다.
 _DIGITS = r"(?<![A-Za-z0-9])(\d{1,3})"
 # "점수"의 점은 단위가 아니다. 숫자 쪽에도 같은 덫이 있다("비12 점수").
+# 전사가 점을 "쩜"으로 흘리는 일이 잦아 둘 다 받는다. 실제 진료 녹음에서
+# "삼십 쩜 만쯤에 이십 육 점" 으로 나와 만점 쪽을 통째로 놓쳤다.
+_UNIT = r"[점쩜](?!수)"
 _OUT_OF = re.compile(
-    _DIGITS + r"\s*점(?!수)\s*만[가-힣]?\s*(?:에|으로)?\s*(?:는)?\s*" + _DIGITS + r"\s*점(?!수)"
+    _DIGITS + r"\s*" + _UNIT + r"\s*만[가-힣]?\s*(?:에|으로)?\s*(?:는)?\s*" + _DIGITS + r"\s*" + _UNIT
 )
-_SCORE = re.compile(_DIGITS + r"\s*점(?!수)")
+_SCORE = re.compile(_DIGITS + r"\s*" + _UNIT)
 
 # "영 점, 십 점으로 해서 적으세요"는 눈금 설명이지 측정값이 아니다.
 # 올리면 "통증 0점"이라는 없던 기록이 남는다.
-_SCALE = re.compile(r"\d{1,3}\s*점\s*(?:으로|로)\s*(?:해서|하고|두고|보고|잡|하면)")
+_SCALE = re.compile(r"\d{1,3}\s*[점쩜]\s*(?:으로|로)\s*(?:해서|하고|두고|보고|잡|하면)")
 
 # 아픈 정도는 환자 본인만 안다. 이쪽은 환자 말도 받는다.
 _SELF_REPORTED = re.compile(r"통증|아프|아픔|불편|저림|가렵|가려")

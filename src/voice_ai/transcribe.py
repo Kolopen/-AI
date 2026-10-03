@@ -836,8 +836,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--denoise",
-        action="store_true",
-        help="쉬는 틈에서 잡음을 재서 걷어낸 뒤 전사한다. --levels 로 잡음 대비가 낮게 나왔을 때 쓴다.",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="쉬는 틈에서 잡음을 재서 걷어낸 뒤 전사한다. 깨끗한 녹음이면 뺄 것이 적어 거의 그대로 간다.",
     )
     parser.add_argument(
         "--levels",
@@ -885,9 +886,6 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--segmentation(+--embedding) 또는 --vad 중 하나는 있어야 합니다.")
     if args.segmentation and not args.embedding:
         parser.error("--segmentation을 쓰려면 --embedding도 필요합니다.")
-
-    if args.denoise and not args.segmentation:
-        parser.error("--denoise 에는 --segmentation 이 필요합니다. 쉬는 틈을 알아야 잡음을 잽니다.")
 
     if args.levels:
         if not args.segmentation:

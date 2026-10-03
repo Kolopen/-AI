@@ -165,3 +165,28 @@ def test_숫자_쪽에도_같은_덫이_있다():
     )
 
     assert found == []
+
+
+def test_점을_쩜으로_흘려도_만점을_받는다():
+    # 잡음을 걷어낸 실제 녹음이 "삼십 쩜 만쯤에 이십 육 점" 으로 나왔다.
+    # 전보다 정확해진 전사인데 단위가 쩜이라 만점을 통째로 놓쳤다.
+    found = extract(
+        [Utterance("D", 58_000, 66_000, "지난검사 점수는 삼십 쩜 만쯤에 이십 육 점이었습니다")],
+        ROLES,
+        TERMS,
+    )
+
+    assert [(s.value, s.maximum) for s in found] == [("26", "30")]
+
+
+def test_쩜으로_말한_검사_점수도_받는다():
+    found = extract(
+        [Utterance("D", 72_000, 75_000, "기억력검사 점수는 이십 육 쩜이었습니다")], ROLES, TERMS
+    )
+
+    assert [s.value for s in found] == ["26"]
+
+
+def test_쩜으로_설명한_눈금은_측정값이_아니다():
+    # "0쩜으로 해서 적어보세요"는 눈금 설명이다. 올리면 없던 기록이 남는다.
+    assert not extract([Utterance("D", 0, 5_000, "0쩜으로 해서 적어보세요")], ROLES, TERMS)
