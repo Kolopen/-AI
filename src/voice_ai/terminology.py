@@ -18,10 +18,13 @@ TERMS_DIR = Path(__file__).parent / "data" / "terms"
 # 진료과를 고르지 않아도 늘 함께 불러오는 사전.
 COMMON = "공통"
 
-_SECTION = re.compile(r"^\[(drug|condition|test|confusable|lifestyle)\]$")
+_SECTION = re.compile(r"^\[(drug|condition|test|confusable|lifestyle|misheard)\]$")
 
 # "신장 = 소변 크레아티닌" 처럼 용어와 그 용어가 나올 만한 문맥 단어를 적는다.
 _CONFUSABLE = re.compile(r"^(\S+)\s*=\s*(.+)$")
+
+# "침해 = 치매" 처럼 실제로 들린 말과 올바른 말을 적는다.
+_MISHEARD = re.compile(r"^(\S+)\s*=\s*(\S+)$")
 
 
 @dataclass(frozen=True)
@@ -34,6 +37,9 @@ class Terminology:
     # 발음이 닮아 서로 바뀌어 전사되는 용어와, 그 용어가 나올 만한 문맥 단어.
     # 둘 다 사전에 있는 실재 단어라 발음 유사도로는 걸러지지 않는다.
     confusable: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    # 실제로 들린 말 -> 올바른 말. 발음 유사도로 못 잡는 자리를 손으로 적는다.
+    # "치매"를 네 엔진이 전부 다르게 틀렸고 유사도로는 하나도 못 걸렀다.
+    misheard: dict[str, str] = field(default_factory=dict)
 
     @property
     def all_terms(self) -> frozenset[str]:
@@ -46,6 +52,7 @@ class Terminology:
             tests=self.tests | other.tests,
             lifestyle=self.lifestyle | other.lifestyle,
             confusable={**self.confusable, **other.confusable},
+            misheard={**self.misheard, **other.misheard},
         )
 
 
@@ -59,6 +66,7 @@ def _read(path: Path) -> Terminology:
         "drug": set(), "condition": set(), "test": set(), "lifestyle": set()
     }
     confusable: dict[str, tuple[str, ...]] = {}
+    misheard: dict[str, str] = {}
     section: str | None = None
 
     for line in path.read_text(encoding="utf-8").splitlines():
@@ -72,6 +80,10 @@ def _read(path: Path) -> Terminology:
             pair = _CONFUSABLE.match(line)
             if pair:
                 confusable[pair.group(1)] = tuple(pair.group(2).split())
+        elif section == "misheard":
+            pair = _MISHEARD.match(line)
+            if pair:
+                misheard[pair.group(1)] = pair.group(2)
         elif section:
             buckets[section].add(line)
 
@@ -81,6 +93,7 @@ def _read(path: Path) -> Terminology:
         tests=frozenset(buckets["test"]),
         lifestyle=frozenset(buckets["lifestyle"]),
         confusable=confusable,
+        misheard=misheard,
     )
 
 

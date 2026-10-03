@@ -322,7 +322,7 @@ def main(argv: list[str] | None = None) -> int:
     # 역할이 붙은 발화로 넘어간다. 문장 단위로 내려간 경우 입력 발화의
     # 화자 태그는 역할과 짝이 맞지 않아 뒤 단계가 전부 비어서 나온다.
     labelled = result.labelled or utterances
-    corrections = find_corrections(utterances, set(terms.all_terms))
+    corrections = find_corrections(utterances, set(terms.all_terms), terms.misheard)
 
     roles_by_tag = {sp.speaker_tag: sp.role for sp in result.speakers}
     facts = extract_facts(

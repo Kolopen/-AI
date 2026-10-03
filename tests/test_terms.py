@@ -144,3 +144,35 @@ def test_longer_terms_are_still_corrected_from_the_dictionary_alone():
     corrections = find_corrections(transcript, terms)
 
     assert [(c.original, c.corrected) for c in corrections] == [("폴레스테롤이", "콜레스테롤")]
+
+
+def test_손으로_적은_짝은_그대로_고친다():
+    # "치매"를 네 엔진이 전부 다르게 틀렸고 유사도 1위가 전부 엉뚱했다.
+    # 치밀하고 -> 치매약, 짐으로 -> 이명. 기준을 낮추면 없는 병이 들어온다.
+    found = find_corrections(
+        [Utterance("D", 0, 9_000, "점수 하나만으로 침해라고 진단하지는 않습니다")],
+        {"치매", "치매약", "이명"},
+        {"침해": "치매"},
+    )
+
+    assert [(c.original, c.corrected, c.evidence) for c in found] == [
+        ("침해", "치매", "REGISTERED")
+    ]
+
+
+def test_적지_않은_말은_그대로_둔다():
+    assert find_corrections(
+        [Utterance("D", 0, 9_000, "점수 하나만으로 치고 진단하지는 않습니다")],
+        {"치매"},
+        {"침해": "치매"},
+    ) == []
+
+
+def test_손으로_적은_짝이_먼저_온다():
+    found = find_corrections(
+        [Utterance("D", 0, 9_000, "침해라고 진단하지 않습니다 네파검사도 안 했습니다")],
+        {"치매", "뇌파검사"},
+        {"침해": "치매"},
+    )
+
+    assert found[0].evidence == "REGISTERED"

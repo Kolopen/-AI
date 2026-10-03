@@ -81,7 +81,8 @@ class TermCorrection:
     original: str
     corrected: str
     similarity: float
-    # IN_DOCUMENT: 올바른 형태가 같은 전사문에 이미 나왔다. 가장 믿을 만하다.
+    # REGISTERED: 사람이 손으로 적어 둔 짝이다. 가장 확실하다.
+    # IN_DOCUMENT: 올바른 형태가 같은 전사문에 이미 나왔다.
     # DICTIONARY: 사전에만 있다.
     evidence: str
     start_ms: int
@@ -99,14 +100,37 @@ def _candidates(text: str) -> set[str]:
 
 
 def find_corrections(
-    utterances: list[Utterance], dictionary: set[str]
+    utterances: list[Utterance],
+    dictionary: set[str],
+    misheard: dict[str, str] | None = None,
 ) -> list[TermCorrection]:
-    """전사문에서 사전 용어의 오인식으로 보이는 표현을 찾는다."""
+    """전사문에서 사전 용어의 오인식으로 보이는 표현을 찾는다.
+
+    `misheard` 는 손으로 적은 (들린 말 -> 올바른 말) 짝이다. 발음 유사도로
+    못 잡는 자리에 쓴다. 실제 녹음에서 "치매"를 네 엔진이 전부 다르게 틀렸고
+    (치밀하고 / 치고 / 짐으로 / 침해) 유사도로는 하나도 못 걸렀다. 두 글자
+    용어라 기준을 낮출 수도 없었다. 들린 말을 적어 두는 것이 유일한 길이다.
+    """
     whole = _SPACE.sub("", " ".join(u.text for u in utterances))
     present = {term for term in dictionary if term in whole}
 
     corrections: list[TermCorrection] = []
     seen: set[tuple[str, str]] = set()
+
+    for utterance in utterances:
+        for wrong, right in (misheard or {}).items():
+            if wrong not in utterance.text or (wrong, right) in seen:
+                continue
+            seen.add((wrong, right))
+            corrections.append(
+                TermCorrection(
+                    original=wrong,
+                    corrected=right,
+                    similarity=1.0,
+                    evidence="REGISTERED",
+                    start_ms=utterance.start_ms,
+                )
+            )
 
     for utterance in utterances:
         for candidate in _candidates(utterance.text):
@@ -157,7 +181,8 @@ def find_corrections(
                 )
             )
 
-    corrections.sort(key=lambda c: (c.evidence != "IN_DOCUMENT", -c.similarity))
+    order = {"REGISTERED": 0, "IN_DOCUMENT": 1, "DICTIONARY": 2}
+    corrections.sort(key=lambda c: (order.get(c.evidence, 3), -c.similarity))
     return corrections
 
 

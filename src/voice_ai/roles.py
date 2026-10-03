@@ -98,7 +98,15 @@ SIGNALS: dict[Role, list[Signal]] = {
 # 한 명씩만 존재한다고 보는 역할. 나머지는 UNKNOWN으로 남긴다.
 EXCLUSIVE_ROLES = (Role.DOCTOR, Role.MANAGER, Role.PATIENT, Role.NURSE)
 
-QUESTION_PATTERN = re.compile(r"\?|까요|나요|가요|습니까|ㅂ니까|인가요|은지요")
+# 의문 어미는 문장 끝에 온다. 어디서든 찾으면 "제가요 그 개선동으로 하고요"의
+# "가요"가 질문이 되고, 엉뚱한 의사 발언이 답변으로 붙는다. 한국어 파인튜닝
+# 모델은 물음표를 아예 안 찍어서 이 규칙으로만 가려야 한다.
+#
+# "나요"는 "-나요?" 의문형이기도 하고 "나다"의 서술형이기도 하다("기억이 잘
+# 안 나요"). 앞에 안·못이 오면 서술형으로 본다. 의문형은 어간에 붙으므로
+# "안 되나요?" 같은 진짜 질문은 "되" 다음이라 걸리지 않는다.
+_QUESTION_ENDING = r"까요|(?<!안 )(?<!못 )나요|가요|습니까|ㅂ니까|인가요|은지요|ㄹ까요"
+QUESTION_PATTERN = re.compile(rf"\?|(?:{_QUESTION_ENDING})\s*[.!]?\s*$")
 
 _SENTENCE_BOUNDARY = re.compile(r"(?<=[.!?])\s+")
 
