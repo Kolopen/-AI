@@ -599,3 +599,66 @@ def test_snr_says_how_far_speech_sits_above_the_noise():
     assert signal_to_noise(0.1, 0.01) == pytest.approx(20.0)
     assert signal_to_noise(0.01, 0.01) == pytest.approx(0.0)
     assert signal_to_noise(0.05, 0.0) is None
+
+
+def test_the_stft_round_trip_is_exact():
+    """잡음을 빼기 전에, 아무것도 안 빼면 원본이 그대로 나와야 한다."""
+    from voice_ai.transcribe import _istft, _stft
+
+    for length in (16_000, 500, 3):
+        samples = (np.random.default_rng(0).standard_normal(length) * 0.1).astype(np.float32)
+        restored = _istft(_stft(samples), length)
+        assert len(restored) == length
+        assert np.max(np.abs(samples - restored)) < 1e-6
+
+
+def test_the_noise_profile_follows_the_frequencies_it_was_given():
+    """에어컨은 낮은 쪽, 형광등은 높은 쪽에 깔린다. 한 숫자로는 못 걷는다."""
+    from voice_ai.transcribe import FRAME_SIZE, SAMPLE_RATE, noise_profile
+
+    t = np.arange(3 * SAMPLE_RATE) / SAMPLE_RATE
+    audio = (np.sin(2 * np.pi * 200 * t) * 0.05).astype(np.float32)
+    profile = noise_profile(audio, [("speaker_00", 0, 1000)])
+
+    assert profile is not None
+    peak = int(np.argmax(profile))
+    assert abs(peak * SAMPLE_RATE / FRAME_SIZE - 200) < SAMPLE_RATE / FRAME_SIZE
+
+
+def test_there_is_no_profile_without_a_gap():
+    from voice_ai.transcribe import SAMPLE_RATE, noise_profile
+
+    audio = np.zeros(2 * SAMPLE_RATE, dtype=np.float32)
+    assert noise_profile(audio, [("speaker_00", 0, 2000)]) is None
+
+
+def test_reducing_noise_lifts_speech_above_it():
+    """실제 녹음은 말소리가 잡음보다 5dB 밖에 크지 않았다. 그걸 벌려야 한다."""
+    from voice_ai.transcribe import SAMPLE_RATE, noise_profile, reduce_noise, segment_level
+
+    rng = np.random.default_rng(0)
+    t = np.arange(6 * SAMPLE_RATE) / SAMPLE_RATE
+    voice = sum(np.sin(2 * np.pi * f * t) for f in (180, 360, 720, 1400)) / 4
+
+    audio = (rng.standard_normal(len(t)) * 0.05).astype(np.float32)
+    audio[2 * SAMPLE_RATE : 3 * SAMPLE_RATE] += (voice[:SAMPLE_RATE] * 0.08).astype(np.float32)
+    turns = [("speaker_00", 2000, 3000)]
+
+    def margin(samples: np.ndarray) -> float:
+        speech = segment_level(samples[2 * SAMPLE_RATE : 3 * SAMPLE_RATE])
+        quiet = segment_level(samples[4 * SAMPLE_RATE : 5 * SAMPLE_RATE])
+        return 20 * float(np.log10(speech / quiet))
+
+    cleaned = reduce_noise(audio, noise_profile(audio, turns))
+    assert margin(cleaned) - margin(audio) > 3.0
+
+
+def test_some_noise_is_left_behind_on_purpose():
+    """깨끗이 0 으로 만들면 금속성 잡소리가 생겨 전사가 오히려 나빠진다."""
+    from voice_ai.transcribe import SAMPLE_RATE, noise_profile, reduce_noise, segment_level
+
+    rng = np.random.default_rng(1)
+    audio = (rng.standard_normal(3 * SAMPLE_RATE) * 0.05).astype(np.float32)
+    cleaned = reduce_noise(audio, noise_profile(audio, [("speaker_00", 0, 1000)]))
+
+    assert segment_level(cleaned[2 * SAMPLE_RATE :]) > 0.0

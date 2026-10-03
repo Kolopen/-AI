@@ -86,30 +86,99 @@ def measure_levels(
     ]
 
 
+# 잡음 분석에 쓰는 창 크기. 32ms 면 말소리의 울림 한 주기가 들어간다.
+FRAME_SIZE = 512
+HOP_SIZE = 128
+# 잰 잡음보다 이만큼 더 빼낸다. 1.0 이면 덜 빠지고, 너무 키우면 말소리가 깎인다.
+OVER_SUBTRACT = 1.5
+# 다 빼지 않고 이만큼은 남긴다. 0 으로 만들면 "뮤지컬 노이즈" 라는 금속성
+# 잡소리가 생겨서 오히려 전사가 나빠진다.
+RESIDUAL_GAIN = 0.1
+
+
+def gaps(audio: np.ndarray, turns: list[tuple[str, int, int]]) -> list[np.ndarray]:
+    """아무도 말하지 않는 틈만 모은다. 거기 있는 소리가 곧 잡음이다."""
+    found: list[np.ndarray] = []
+    cursor = 0
+    for _, start_ms, end_ms in sorted(turns, key=lambda t: t[1]):
+        if start_ms > cursor:
+            gap = audio[int(cursor * SAMPLE_RATE / 1000) : int(start_ms * SAMPLE_RATE / 1000)]
+            if len(gap) >= SAMPLE_RATE // 10:
+                found.append(gap)
+        cursor = max(cursor, end_ms)
+
+    tail = audio[int(cursor * SAMPLE_RATE / 1000) :]
+    if len(tail) >= SAMPLE_RATE // 10:
+        found.append(tail)
+    return found
+
+
 def noise_floor(audio: np.ndarray, turns: list[tuple[str, int, int]]) -> float:
-    """아무도 말하지 않는 틈의 소리 크기. 그게 잡음이다.
+    """잡음이 얼마나 큰지.
 
     말소리 크기만으로는 왜 안 들리는지 알 수 없다. 크게 담겼어도 잡음이 같이
     크면 모델은 묻힌 말을 받아 적지 못한다. 틈을 재면 둘이 갈린다.
 
     가운데값을 쓴다. 틈에 기침이나 문 닫는 소리가 섞여도 흔들리지 않는다.
     """
-    gaps: list[float] = []
-    cursor = 0
-    for _, start_ms, end_ms in sorted(turns, key=lambda t: t[1]):
-        if start_ms > cursor:
-            gap = audio[int(cursor * SAMPLE_RATE / 1000) : int(start_ms * SAMPLE_RATE / 1000)]
-            if len(gap) >= SAMPLE_RATE // 10:
-                gaps.append(segment_level(gap))
-        cursor = max(cursor, end_ms)
+    levels = [segment_level(gap) for gap in gaps(audio, turns)]
+    return float(np.median(levels)) if levels else 0.0
 
-    tail = audio[int(cursor * SAMPLE_RATE / 1000) :]
-    if len(tail) >= SAMPLE_RATE // 10:
-        gaps.append(segment_level(tail))
 
-    if not gaps:
-        return 0.0
-    return float(np.median(gaps))
+def _stft(samples: np.ndarray) -> np.ndarray:
+    # 앞뒤로 창 하나씩 채운다. 한 쪽 끝의 몇 샘플은 창이 거의 0 이라 겹침이
+    # 모자라고, 그대로 두면 구간 머리에서 "툭" 하는 소리가 남는다.
+    window = np.hanning(FRAME_SIZE).astype(np.float32)
+    padded = np.pad(samples, (FRAME_SIZE, FRAME_SIZE))
+    count = 1 + (len(padded) - FRAME_SIZE) // HOP_SIZE
+    starts = HOP_SIZE * np.arange(count)[:, None]
+    return np.fft.rfft(padded[starts + np.arange(FRAME_SIZE)[None, :]] * window, axis=1)
+
+
+def _istft(spectrum: np.ndarray, length: int) -> np.ndarray:
+    window = np.hanning(FRAME_SIZE).astype(np.float32)
+    frames = np.fft.irfft(spectrum, n=FRAME_SIZE, axis=1) * window
+
+    out = np.zeros(length + 4 * FRAME_SIZE, dtype=np.float64)
+    weight = np.zeros_like(out)
+    for index, frame in enumerate(frames):
+        start = index * HOP_SIZE
+        out[start : start + FRAME_SIZE] += frame
+        weight[start : start + FRAME_SIZE] += window**2
+
+    weight[weight < 1e-8] = 1.0
+    return (out / weight)[FRAME_SIZE : FRAME_SIZE + length].astype(np.float32)
+
+
+def noise_profile(audio: np.ndarray, turns: list[tuple[str, int, int]]) -> np.ndarray | None:
+    """주파수마다 잡음이 얼마나 깔려 있는지.
+
+    크기 하나로는 못 걷어낸다. 에어컨은 낮은 쪽에, 형광등은 높은 쪽에 깔리므로
+    주파수별로 다르게 빼야 말소리를 덜 깎는다.
+    """
+    frames = [_stft(gap) for gap in gaps(audio, turns) if len(gap) >= FRAME_SIZE]
+    if not frames:
+        return None
+    return np.median(np.abs(np.concatenate(frames, axis=0)), axis=0)
+
+
+def reduce_noise(
+    samples: np.ndarray,
+    profile: np.ndarray,
+    *,
+    over: float = OVER_SUBTRACT,
+    residual: float = RESIDUAL_GAIN,
+) -> np.ndarray:
+    """잰 잡음을 주파수마다 빼낸다.
+
+    이 녹음은 말소리가 잡음보다 5~10dB 밖에 크지 않았다. 클로바는 같은 녹음을
+    받아 적었으니 소리가 없는 것이 아니라 우리 모델이 그 잡음을 못 견디는
+    것이다. 깔린 만큼 빼주면 모델이 보는 입력이 학습 때와 가까워진다.
+    """
+    spectrum = _stft(samples)
+    magnitude = np.abs(spectrum)
+    kept = np.maximum(magnitude - over * profile[None, :], residual * magnitude)
+    return _istft(spectrum * (kept / np.maximum(magnitude, 1e-10)), len(samples))
 
 
 def signal_to_noise(level: float, floor: float) -> float | None:
@@ -766,6 +835,11 @@ def main(argv: list[str] | None = None) -> int:
         help="화자 수를 알면 지정한다. 진료는 보통 2명(의사·환자) 또는 3명(매니저 포함).",
     )
     parser.add_argument(
+        "--denoise",
+        action="store_true",
+        help="쉬는 틈에서 잡음을 재서 걷어낸 뒤 전사한다. --levels 로 잡음 대비가 낮게 나왔을 때 쓴다.",
+    )
+    parser.add_argument(
         "--levels",
         action="store_true",
         help="전사하지 않고 화자별 소리 크기만 잰다. 전사가 사람마다 갈릴 때 쓴다.",
@@ -811,6 +885,9 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--segmentation(+--embedding) 또는 --vad 중 하나는 있어야 합니다.")
     if args.segmentation and not args.embedding:
         parser.error("--segmentation을 쓰려면 --embedding도 필요합니다.")
+
+    if args.denoise and not args.segmentation:
+        parser.error("--denoise 에는 --segmentation 이 필요합니다. 쉬는 틈을 알아야 잡음을 잽니다.")
 
     if args.levels:
         if not args.segmentation:
@@ -861,6 +938,14 @@ def main(argv: list[str] | None = None) -> int:
             num_threads=args.threads,
         )
         speakers = sorted({speaker for speaker, _, _ in turns})
+        if args.denoise:
+            profile = noise_profile(audio, turns)
+            if profile is None:
+                print("쉬는 틈이 없어 잡음을 잴 수 없습니다. 그대로 전사합니다.", file=sys.stderr)
+            else:
+                before = noise_floor(audio, turns)
+                audio = reduce_noise(audio, profile)
+                print(f"잡음 {before:.4f} -> {noise_floor(audio, turns):.4f} 로 걷었습니다.")
         print(f"화자 {len(speakers)}명, 발언 {len(turns)}구간을 찾았습니다. 전사를 시작합니다.")
         chunks = transcribe_turns(
             audio,
