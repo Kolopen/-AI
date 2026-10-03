@@ -59,6 +59,50 @@ def _clean(text: str) -> str:
     return cleaned if _HANGUL.search(cleaned) else ""
 
 
+# 작게 담긴 구간을 끌어올릴 때 맞출 크기. 사람 말소리의 흔한 수준이다.
+TARGET_RMS = 0.05
+# 이보다 더 키우지 않는다. 거의 무음인 구간을 끝까지 키우면 잡음만 커진다.
+MAX_GAIN = 8.0
+# 키운 뒤 이 값을 넘지 않게 눌러 찌그러짐을 막는다.
+PEAK_CEILING = 0.95
+
+
+def boost_quiet(
+    samples: np.ndarray,
+    *,
+    target_rms: float = TARGET_RMS,
+    max_gain: float = MAX_GAIN,
+    ceiling: float = PEAK_CEILING,
+) -> np.ndarray:
+    """작게 담긴 구간을 끌어올린다.
+
+    whisper 는 고르게 녹음된 음성으로 배웠다. 작게 담긴 말은 배운 적 없는 입력
+    이라 디코더가 소리 대신 언어 모델로 메우고, 그게 환각이 된다. 실제 진료
+    녹음의 환자 구간에서 "고속도로 교통정보고 좋습니다", "애플의 베풍과 이혼은
+    새 액체에 밥을 먹었습니다" 같은 방송 말투가 나왔다. 같은 녹음에서 의사
+    구간은 멀쩡했다. 녹음기가 매니저 폰에 있고 환자는 고령이라 소리가 작다.
+
+    키우기만 하고 줄이지는 않는다. 또렷하게 담긴 의사 목소리를 건드릴 이유가
+    없고, 줄였다가 나빠지면 되돌릴 길이 없다.
+    """
+    if len(samples) == 0:
+        return samples
+    rms = float(np.sqrt(np.mean(np.square(samples))))
+    if rms <= 0.0:
+        return samples
+
+    gain = min(target_rms / rms, max_gain)
+    if gain <= 1.0:
+        return samples
+
+    peak = float(np.max(np.abs(samples)))
+    if peak > 0.0:
+        gain = min(gain, ceiling / peak)
+    if gain <= 1.0:
+        return samples
+    return (samples * gain).astype(np.float32)
+
+
 def _quietest_point(samples: np.ndarray, target: int, search: int) -> int:
     """target 부근에서 가장 조용한 지점을 찾는다.
 
@@ -469,7 +513,7 @@ def transcribe_turns(
             if len(part) < min_samples:
                 continue
             stream = recognizer.create_stream()
-            stream.accept_waveform(SAMPLE_RATE, part)
+            stream.accept_waveform(SAMPLE_RATE, boost_quiet(part))
             recognizer.decode_stream(stream)
 
             raw = _clean(stream.result.text)
@@ -527,7 +571,7 @@ def transcribe(
 
             for offset, piece in _split_long(samples, max_samples):
                 stream = recognizer.create_stream()
-                stream.accept_waveform(SAMPLE_RATE, piece)
+                stream.accept_waveform(SAMPLE_RATE, boost_quiet(piece))
                 recognizer.decode_stream(stream)
 
                 raw = _clean(stream.result.text)
