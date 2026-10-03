@@ -736,3 +736,34 @@ def test_a_missing_audio_file_says_so(capsys, tmp_path):
               "--segmentation", "/tmp/a", "--embedding", "/tmp/b"])
 
     assert "녹음 파일이 없습니다" in capsys.readouterr().err
+
+
+def test_dropped_turns_are_counted_with_a_reason():
+    """24구간을 찾아 14구간만 저장하면 나머지 열이 어디로 갔는지 알아야 한다."""
+    from voice_ai.transcribe import SAMPLE_RATE, transcribe_turns
+
+    class Recognizer:
+        rejected = [("지어낸 말", 0.0, -0.9, 1.0)]
+
+        def create_stream(self):
+            return self
+
+        def accept_waveform(self, rate, audio):
+            self.audio = audio
+
+        def decode_stream(self, stream):
+            stream.result = type("R", (), {"text": ""})()
+
+    audio = np.zeros(10 * SAMPLE_RATE, dtype=np.float32)
+    report: dict = {}
+    chunks = transcribe_turns(
+        audio,
+        [("speaker_00", 0, 3000), ("speaker_00", 3000, 3100)],
+        recognizer=Recognizer(),
+        min_chunk_duration=0.6,
+        report=report,
+    )
+
+    assert chunks == []
+    assert len(report["확신 없어 버림"]) == 1
+    assert len(report["너무 짧음"]) == 1

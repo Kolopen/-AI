@@ -438,7 +438,15 @@ class FasterWhisper:
             # 화자분리로 이미 구간을 끊었다.
             vad_filter=False,
         )
-        kept = [s for s in segments if confident(s)]
+        decoded = list(segments)
+        kept = [s for s in decoded if confident(s)]
+        # 버린 것도 남긴다. 조용히 사라지면 구간 수가 왜 줄었는지 알 수 없다.
+        self.rejected = [
+            (s.text.strip(), round(s.no_speech_prob, 3), round(s.avg_logprob, 3),
+             round(s.compression_ratio, 2))
+            for s in decoded
+            if not confident(s)
+        ]
         self.last = [
             (s.text.strip(), round(s.no_speech_prob, 3), round(s.avg_logprob, 3),
              round(s.compression_ratio, 2), confident(s))
@@ -574,6 +582,13 @@ def diarize(
     ]
 
 
+def _note(report: dict | None, reason: str, samples: list | None) -> None:
+    """구간을 왜 버렸는지 적어 둔다."""
+    if report is None:
+        return
+    report.setdefault(reason, []).extend(samples or [("", 0.0, 0.0, 0.0)])
+
+
 def transcribe_turns(
     audio: np.ndarray,
     turns: list[tuple[str, int, int]],
@@ -581,6 +596,7 @@ def transcribe_turns(
     recognizer,
     max_chunk_duration: float = 10.0,
     min_chunk_duration: float = FALLBACK_MIN_CHUNK,
+    report: dict | None = None,
 ) -> list[dict]:
     """화자분리가 잡아준 구간마다 전사한다. 구간이 곧 한 사람의 발언이다.
 
@@ -596,17 +612,23 @@ def transcribe_turns(
     for speaker, start_ms, end_ms in turns:
         piece = audio[int(start_ms * SAMPLE_RATE / 1000) : int(end_ms * SAMPLE_RATE / 1000)]
         if len(piece) < min_samples:
+            _note(report, "너무 짧음", None)
             continue
 
         for offset, part in _split_long(piece, max_samples):
             if len(part) < min_samples:
+                _note(report, "너무 짧음", None)
                 continue
             stream = recognizer.create_stream()
             stream.accept_waveform(SAMPLE_RATE, part)
             recognizer.decode_stream(stream)
 
             raw = _clean(stream.result.text)
-            if not raw or looks_repeated(raw):
+            if not raw:
+                _note(report, "확신 없어 버림", getattr(recognizer, "rejected", None))
+                continue
+            if looks_repeated(raw):
+                _note(report, "같은 말 되풀이", [(raw, 0, 0, 0)])
                 continue
 
             part_start = start_ms + round(offset * 1000 / SAMPLE_RATE)
@@ -794,6 +816,23 @@ def _mark_manager(
 
 
 
+def _print_dropped(report: dict) -> None:
+    """버린 구간을 이유별로 보여준다.
+
+    24구간을 찾아 14구간만 저장하면 나머지 열이 어디로 갔는지 알아야 한다.
+    조용히 사라지면 기준이 너무 조이는 것인지 녹음이 나쁜 것인지 가를 수 없다.
+    """
+    if not report:
+        return
+    total = sum(len(rows) for rows in report.values())
+    print(f"버린 구간 {total}개")
+    for reason, rows in sorted(report.items(), key=lambda kv: -len(kv[1])):
+        print(f"  {reason} {len(rows)}개")
+        for text, _, logprob, _ in rows[:3]:
+            if text:
+                print(f"    확신 {logprob:6.2f}  {text[:50]}")
+
+
 def _print_levels(levels: list[tuple[str, int, int, float]], floor: float) -> None:
     """화자별 소리 크기와 잡음 대비를 사람이 읽게 찍는다."""
     by_speaker: dict[str, list[float]] = {}
@@ -973,13 +1012,16 @@ def main(argv: list[str] | None = None) -> int:
                 audio = reduce_noise(audio, profile)
                 print(f"잡음 {before:.4f} -> {noise_floor(audio, turns):.4f} 로 걷었습니다.")
         print(f"화자 {len(speakers)}명, 발언 {len(turns)}구간을 찾았습니다. 전사를 시작합니다.")
+        report: dict = {}
         chunks = transcribe_turns(
             audio,
             turns,
             recognizer=recognizer,
             max_chunk_duration=args.max_chunk,
             min_chunk_duration=args.min_chunk,
+            report=report,
         )
+        _print_dropped(report)
         if args.manager:
             chunks = _mark_manager(audio, turns, chunks, args.manager, args.embedding, args.threads)
     else:
