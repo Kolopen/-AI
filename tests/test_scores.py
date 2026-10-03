@@ -190,3 +190,27 @@ def test_쩜으로_말한_검사_점수도_받는다():
 def test_쩜으로_설명한_눈금은_측정값이_아니다():
     # "0쩜으로 해서 적어보세요"는 눈금 설명이다. 올리면 없던 기록이 남는다.
     assert not extract([Utterance("D", 0, 5_000, "0쩜으로 해서 적어보세요")], ROLES, TERMS)
+
+
+def test_만점을_흘린_네_가지를_모두_받는다():
+    # 실제 녹음에서 전사가 만점을 이렇게들 흘렸다. 못 받으면 "30점" 과 "26점"
+    # 이 별개 점수 두 건으로 리포트에 올라간다.
+    for spoken in (
+        "지난 검사 점수는 30점 만점에 26점이었습니다",
+        "지난검사 점수는 삼십 쩜 만쯤에 이십 육 점이었습니다",
+        "지난 검사 점수는 30점 안에 26점이었습니다",
+        "지난 검사 점수는 삼십 점 한 점에 이십 육 점이었습니다",
+    ):
+        found = extract([Utterance("D", 58_000, 66_000, spoken)], ROLES, TERMS)
+        assert [(s.value, s.maximum) for s in found] == [("26", "30")], spoken
+
+
+def test_따로_말한_두_점수는_만점이_아니다():
+    """"어제 8점 오늘 5점"을 "5점 만점에 8점"으로 묶으면 없던 눈금이 생긴다."""
+    found = extract(
+        [Utterance("P", 0, 5_000, "통증은 어제 8점 오늘 5점이었어요")],
+        {"P": Role.PATIENT},
+        TERMS,
+    )
+
+    assert [(s.value, s.maximum) for s in found] == [("8", None), ("5", None)]

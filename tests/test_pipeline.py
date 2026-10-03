@@ -4,6 +4,9 @@ from pathlib import Path
 from voice_ai import terminology
 from voice_ai.analyze import _diarization_collapsed, analyze_without_speakers, manager_tag
 from voice_ai.clova import group_by_speaker, parse_segments
+import contextlib
+import io
+
 from voice_ai.models import AskedState, Role, SpeakerProfile, Utterance
 from voice_ai.qa import explain_qa, pair_qa
 from voice_ai.roles import classify, doctor_score, sentence_role
@@ -415,3 +418,33 @@ def test_an_answer_stops_at_the_next_question():
 
     first = next(p for p in pairs if "혈압약" in p.question)
     assert first.answer == "네 괜찮습니다"
+
+
+def test_both_drafts_name_what_differs():
+    """두 방식의 리포트를 나란히 놓고 다른 줄만 짚어준다."""
+    from voice_ai.analyze import print_both_drafts
+    from voice_ai.models import ReportDraft
+
+    grouped = ReportDraft(treatment_notes="[01:18] 원인을 평가하는 단계입니다")
+    split = ReportDraft(treatment_notes="[01:18] 원인을 평가하는 단계입니다\n[01:30] MRI를 예약하겠습니다")
+
+    printed = io.StringIO()
+    with contextlib.redirect_stdout(printed):
+        print_both_drafts(grouped, split, [])
+    out = printed.getvalue()
+
+    assert "구분 안 함에만     [01:30] MRI를 예약하겠습니다" in out
+    assert "화자 구분함에만" not in out
+
+
+def test_both_drafts_say_when_nothing_differs():
+    from voice_ai.analyze import print_both_drafts
+    from voice_ai.models import ReportDraft
+
+    same = ReportDraft(treatment_notes="[01:18] 같은 줄")
+
+    printed = io.StringIO()
+    with contextlib.redirect_stdout(printed):
+        print_both_drafts(same, ReportDraft(treatment_notes="[01:18] 같은 줄"), [])
+
+    assert "두 리포트가 같습니다" in printed.getvalue()

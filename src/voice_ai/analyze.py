@@ -21,6 +21,7 @@ from .models import (
     AskedState,
     Method,
     RegisteredQuestion,
+    ReportDraft,
     Role,
     SpeakerRole,
     Utterance,
@@ -263,6 +264,63 @@ def manager_tag(path: Path) -> str | None:
     return next(iter(tags)) if len(tags) == 1 else None
 
 
+def draft_sections(draft: ReportDraft) -> list[tuple[str, str]]:
+    """리포트 초안에서 내용이 있는 항목만 순서대로."""
+    sections = [
+        ("진료 내용", draft.treatment_notes),
+        ("약품", draft.medication_name),
+        ("복용 방법", draft.medication_schedule_note),
+        ("처방 기간", draft.medication_notes),
+        ("다음 방문", draft.next_visit_note),
+    ]
+    if draft.next_visit_at:
+        sections.append(("후속 예약", f"{draft.next_visit_at}  (매니저 확인 후 예약)"))
+    return [(label, body) for label, body in sections if body]
+
+
+def _print_draft(title: str, draft: ReportDraft, corrections: list) -> None:
+    print(f"\n════ {title} ════")
+    filled = draft_sections(draft)
+    if not filled:
+        print("  (비어 있습니다)")
+        return
+    for label, body in filled:
+        print(f"  [{label}]")
+        for line in body.splitlines():
+            print(f"    {apply_corrections(line, corrections)}")
+    print("  [요약] 매니저가 작성합니다.")
+
+
+def print_both_drafts(
+    with_speakers: ReportDraft, without_speakers: ReportDraft, corrections: list
+) -> None:
+    """같은 전사를 두 방식으로 돌린 리포트를 나란히 놓는다.
+
+    화자를 덩어리로 묶는 쪽은 의사 발언을 놓치지 않는 대신 남의 말을 섞고,
+    문장마다 가르는 쪽은 섞지 않는 대신 의사 발언을 흘린다. 어느 쪽이
+    나은지는 녹음마다 다르므로 눈으로 보고 고르게 한다.
+    """
+    _print_draft("화자 구분함", with_speakers, corrections)
+    _print_draft("화자 구분 안 함", without_speakers, corrections)
+
+    left = dict(draft_sections(with_speakers))
+    right = dict(draft_sections(without_speakers))
+    print("\n════ 차이 ════")
+    same = True
+    for label in sorted(set(left) | set(right)):
+        here, there = left.get(label, ""), right.get(label, "")
+        if here == there:
+            continue
+        same = False
+        print(f"  [{label}]")
+        for line in sorted(set(here.splitlines()) - set(there.splitlines())):
+            print(f"    화자 구분함에만    {line}")
+        for line in sorted(set(there.splitlines()) - set(here.splitlines())):
+            print(f"    구분 안 함에만     {line}")
+    if same:
+        print("  두 리포트가 같습니다.")
+
+
 def _print_registered(registered: list[RegisteredQuestion]) -> None:
     """보호자 질문마다 의사가 뭐라고 답했는지."""
     label = {
@@ -310,6 +368,11 @@ def main(argv: list[str] | None = None) -> int:
         help="화자 라벨을 무시하고 문장 단위로 역할을 가른다. 목소리가 하나뿐인 녹음에 쓴다.",
     )
     parser.add_argument(
+        "--both",
+        action="store_true",
+        help="화자를 구분했을 때와 안 했을 때의 리포트를 나란히 보여준다.",
+    )
+    parser.add_argument(
         "--questions",
         type=Path,
         help="보호자가 미리 남긴 질문 파일. 줄마다 하나씩, 'id = 질문' 형식도 받는다.",
@@ -348,6 +411,32 @@ def main(argv: list[str] | None = None) -> int:
             "화자분리가 사실상 한 사람만 내놓아 문장 단위 판정으로 내려갔습니다. "
             "녹음에 목소리가 하나뿐이거나 화자분리가 실패한 것입니다."
         )
+    if args.both:
+        if not has_speakers:
+            print(
+                "이 전사에는 화자 라벨이 없어 비교할 것이 없습니다. "
+                "--segmentation 으로 전사해야 합니다.",
+                file=sys.stderr,
+            )
+            return 1
+        grouped = analyze_with_speakers(
+            utterances,
+            terms=terms,
+            merge_non_doctor=args.merge_non_doctor,
+            consult_date=args.date,
+            manager_speaker_tag=manager_tag(args.transcript),
+            questions=asked,
+        )
+        split = analyze_without_speakers(
+            utterances, terms=terms, consult_date=args.date, questions=asked
+        )
+        print_both_drafts(
+            grouped.report_draft,
+            split.report_draft,
+            find_corrections(utterances, set(terms.all_terms), terms.misheard),
+        )
+        return 0
+
     result = (
         analyze_with_speakers(
             utterances,
@@ -480,17 +569,7 @@ def main(argv: list[str] | None = None) -> int:
             print("  [생활 지도]")
             print(f"    {', '.join(facts.lifestyle)}")
 
-    draft = result.report_draft
-    sections = [
-        ("진료 내용", draft.treatment_notes),
-        ("약품", draft.medication_name),
-        ("복용 방법", draft.medication_schedule_note),
-        ("처방 기간", draft.medication_notes),
-        ("다음 방문", draft.next_visit_note),
-    ]
-    if draft.next_visit_at:
-        sections.append(("후속 예약", f"{draft.next_visit_at}  (매니저 확인 후 예약)"))
-    filled = [(label, body) for label, body in sections if body]
+    filled = draft_sections(result.report_draft)
     if filled:
         print("\n리포트 초안")
         for label, body in filled:
