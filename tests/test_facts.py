@@ -170,7 +170,7 @@ def test_the_other_engine_supplies_a_period_word_this_one_lost():
     assert alone.time_from_alternate is False
 
     borrowed = extract(ours, ROLES, TERMS, alternate=theirs).measurements[0]
-    assert borrowed.by_time == {"정상": ["200"], "시점없음": ["216"]}
+    assert borrowed.by_time == {"정상기준": ["200"], "시점없음": ["216"]}
     assert borrowed.time_from_alternate is True
 
 

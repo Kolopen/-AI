@@ -9,7 +9,7 @@ from voice_ai.timeline import group_by_time, has_marker
 
 def test_reference_value_comes_before_its_word():
     """한국어는 "40이 정상" 처럼 기준값이 앞에 온다. 시점은 뒤에 온다."""
-    assert group_by_time("40이 정상이신데") == {"정상": ["40"]}
+    assert group_by_time("40이 정상이신데") == {"정상기준": ["40"]}
 
 
 def test_numbers_follow_their_time_marker():
@@ -25,7 +25,7 @@ def test_a_trailing_threshold_does_not_join_the_last_period():
     """
     grouped = group_by_time("이번에는 67 회 23 마가 조금씩 높요 40 이상 보다 높 으니까.")
 
-    assert grouped == {"정상": ["40"], "이번": ["67", "23"]}
+    assert grouped == {"정상기준": ["40"], "이번": ["67", "23"]}
 
 
 def test_a_broken_transcript_gives_the_same_grouping():
@@ -38,7 +38,7 @@ def test_a_broken_transcript_gives_the_same_grouping():
 
 def test_a_misheard_reference_word_is_still_recognised():
     """moonshine 이 "정상"을 "정산"으로 들었다. 0.833 이면 같은 말로 본다."""
-    assert group_by_time("200이 정산이 216이니까") == {"정상": ["200"], "시점없음": ["216"]}
+    assert group_by_time("200이 정산이 216이니까") == {"정상기준": ["200"], "시점없음": ["216"]}
 
 
 def test_a_different_word_is_not_mistaken_for_the_reference():
