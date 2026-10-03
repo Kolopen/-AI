@@ -268,6 +268,67 @@ def manager_tag(path: Path) -> str | None:
 _TIMESTAMP = re.compile(r"^\s*\[\d\d:\d\d\]\s*")
 
 
+def print_facts(facts, corrections: list) -> None:
+    """핵심 내용을 찍는다. 두 방식을 견줄 때 같은 모양으로 두 번 쓴다."""
+    if any([facts.measurements, facts.scores, facts.diagnoses, facts.normal,
+            facts.unconfirmed, facts.drugs, facts.schedule, facts.duration,
+            facts.lifestyle]):
+        print("\n핵심 내용")
+        if facts.measurements:
+            print("  [검사 수치]")
+            for m in facts.measurements:
+                stamp = f"{m.start_ms // 60000:02d}:{m.start_ms // 1000 % 60:02d}"
+                marks = []
+                if m.inferred:
+                    marks.append("검사명 추정")
+                if m.time_from_alternate:
+                    marks.append("시점은 다른 엔진")
+                suffix = f"  ({', '.join(marks)})" if marks else ""
+                print(f"    {m.test}{suffix}")
+                for when, values in m.by_time.items():
+                    print(f"    {'':4} {when:6} {' / '.join(values)}")
+                print(f"    {'':4} └ [{stamp}] {apply_corrections(m.quote, corrections)}")
+        if facts.scores:
+            print("  [점수]")
+            # 한 문장에서 같은 시점으로 나온 점수는 한 줄로 모은다. 전사가
+            # "만점"을 흘리면("30점 안에 26점") 눈금과 값이 따로 떨어져 측정이
+            # 두 번 있었던 것처럼 보인다. 어느 쪽이 만점인지 모를 때는 둘 다
+            # 보여주고 판단은 근거 문장에 맡긴다.
+            grouped: dict[tuple, list] = {}
+            for sc in facts.scores:
+                grouped.setdefault((sc.name, sc.inferred, sc.when, sc.start_ms), []).append(sc)
+            for (name, inferred, when, start_ms), group in grouped.items():
+                stamp = f"{start_ms // 60000:02d}:{start_ms // 1000 % 60:02d}"
+                values = " / ".join(
+                    f"{sc.value}점" + (f" ({sc.maximum}점 만점)" if sc.maximum else "")
+                    for sc in group
+                )
+                mark = "  (검사명 추정)" if inferred else ""
+                print(f"    {name}{mark}")
+                print(f"    {'':4} {when:6} {values}")
+                print(f"    {'':4} └ [{stamp}] {apply_corrections(group[0].quote, corrections)}")
+        if facts.diagnoses:
+            print("  [진단·소견]")
+            print(f"    {', '.join(name for name, _ in facts.diagnoses)}")
+        if facts.normal:
+            print("  [이상 없다고 한 항목]")
+            print(f"    {', '.join(facts.normal)}")
+        if facts.unconfirmed:
+            print("  [아직 아니라고 한 항목]")
+            print(f"    {', '.join(facts.unconfirmed)}")
+        if facts.drugs or facts.schedule or facts.duration:
+            print("  [복용]")
+            row = [", ".join(facts.drugs) or "약품 미확인"]
+            if facts.schedule:
+                row.append(" / ".join(facts.schedule))
+            if facts.duration:
+                row.append(" / ".join(facts.duration))
+            print(f"    {'   '.join(row)}")
+        if facts.lifestyle:
+            print("  [생활 지도]")
+            print(f"    {', '.join(facts.lifestyle)}")
+
+
 def draft_sections(draft: ReportDraft) -> list[tuple[str, str]]:
     """리포트 초안에서 내용이 있는 항목만 순서대로."""
     sections = [
@@ -298,14 +359,21 @@ def doubtful(line: str, medical_terms: frozenset[str]) -> bool:
 
 
 def _print_draft(
-    title: str, draft: ReportDraft, corrections: list, medical_terms: frozenset[str]
+    title: str,
+    draft: ReportDraft,
+    corrections: list,
+    medical_terms: frozenset[str],
+    facts=None,
 ) -> int:
     print(f"\n════ {title} ════")
+    if facts is not None:
+        print_facts(facts, corrections)
     filled = draft_sections(draft)
     if not filled:
-        print("  (비어 있습니다)")
+        print("\n리포트 초안\n  (비어 있습니다)")
         return 0
 
+    print("\n리포트 초안")
     marked = 0
     for label, body in filled:
         print(f"  [{label}]")
@@ -323,6 +391,8 @@ def print_both_drafts(
     without_speakers: ReportDraft,
     corrections: list,
     medical_terms: frozenset[str] = frozenset(),
+    grouped_facts=None,
+    split_facts=None,
 ) -> None:
     """같은 전사를 두 방식으로 돌린 리포트를 나란히 놓는다.
 
@@ -330,8 +400,12 @@ def print_both_drafts(
     문장마다 가르는 쪽은 섞지 않는 대신 의사 발언을 흘린다. 어느 쪽이
     나은지는 녹음마다 다르므로 눈으로 보고 고르게 한다.
     """
-    left_marked = _print_draft("화자 구분함", with_speakers, corrections, medical_terms)
-    right_marked = _print_draft("화자 구분 안 함", without_speakers, corrections, medical_terms)
+    left_marked = _print_draft(
+        "화자 구분함", with_speakers, corrections, medical_terms, grouped_facts
+    )
+    right_marked = _print_draft(
+        "화자 구분 안 함", without_speakers, corrections, medical_terms, split_facts
+    )
     if left_marked or right_marked:
         print(
             "\n  ? 는 문장만 보면 의사 말투가 아닌 줄입니다. 화자분리가 환자나 매니저 말을"
@@ -470,11 +544,24 @@ def main(argv: list[str] | None = None) -> int:
         split = analyze_without_speakers(
             utterances, terms=terms, consult_date=args.date, questions=asked
         )
+        marks = find_corrections(utterances, set(terms.all_terms), terms.misheard)
         print_both_drafts(
             grouped.report_draft,
             split.report_draft,
-            find_corrections(utterances, set(terms.all_terms), terms.misheard),
+            marks,
             frozenset(terms.conditions) | frozenset(terms.tests) | frozenset(terms.drugs),
+            extract_facts(
+                grouped.labelled or utterances,
+                {sp.speaker_tag: sp.role for sp in grouped.speakers},
+                terms,
+                marks,
+            ),
+            extract_facts(
+                split.labelled or utterances,
+                {sp.speaker_tag: sp.role for sp in split.speakers},
+                terms,
+                marks,
+            ),
         )
         return 0
 
@@ -552,63 +639,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"  [{pair.question_at_ms // 1000}초] ({pair.asked_by.value}) {pair.question}")
         print(f"        -> {pair.answer[:80]}")
 
-    if any([facts.measurements, facts.scores, facts.diagnoses, facts.normal,
-            facts.unconfirmed, facts.drugs, facts.schedule, facts.duration,
-            facts.lifestyle]):
-        print("\n핵심 내용")
-        if facts.measurements:
-            print("  [검사 수치]")
-            for m in facts.measurements:
-                stamp = f"{m.start_ms // 60000:02d}:{m.start_ms // 1000 % 60:02d}"
-                marks = []
-                if m.inferred:
-                    marks.append("검사명 추정")
-                if m.time_from_alternate:
-                    marks.append("시점은 다른 엔진")
-                suffix = f"  ({', '.join(marks)})" if marks else ""
-                print(f"    {m.test}{suffix}")
-                for when, values in m.by_time.items():
-                    print(f"    {'':4} {when:6} {' / '.join(values)}")
-                print(f"    {'':4} └ [{stamp}] {apply_corrections(m.quote, corrections)}")
-        if facts.scores:
-            print("  [점수]")
-            # 한 문장에서 같은 시점으로 나온 점수는 한 줄로 모은다. 전사가
-            # "만점"을 흘리면("30점 안에 26점") 눈금과 값이 따로 떨어져 측정이
-            # 두 번 있었던 것처럼 보인다. 어느 쪽이 만점인지 모를 때는 둘 다
-            # 보여주고 판단은 근거 문장에 맡긴다.
-            grouped: dict[tuple, list] = {}
-            for sc in facts.scores:
-                grouped.setdefault((sc.name, sc.inferred, sc.when, sc.start_ms), []).append(sc)
-            for (name, inferred, when, start_ms), group in grouped.items():
-                stamp = f"{start_ms // 60000:02d}:{start_ms // 1000 % 60:02d}"
-                values = " / ".join(
-                    f"{sc.value}점" + (f" ({sc.maximum}점 만점)" if sc.maximum else "")
-                    for sc in group
-                )
-                mark = "  (검사명 추정)" if inferred else ""
-                print(f"    {name}{mark}")
-                print(f"    {'':4} {when:6} {values}")
-                print(f"    {'':4} └ [{stamp}] {apply_corrections(group[0].quote, corrections)}")
-        if facts.diagnoses:
-            print("  [진단·소견]")
-            print(f"    {', '.join(name for name, _ in facts.diagnoses)}")
-        if facts.normal:
-            print("  [이상 없다고 한 항목]")
-            print(f"    {', '.join(facts.normal)}")
-        if facts.unconfirmed:
-            print("  [아직 아니라고 한 항목]")
-            print(f"    {', '.join(facts.unconfirmed)}")
-        if facts.drugs or facts.schedule or facts.duration:
-            print("  [복용]")
-            row = [", ".join(facts.drugs) or "약품 미확인"]
-            if facts.schedule:
-                row.append(" / ".join(facts.schedule))
-            if facts.duration:
-                row.append(" / ".join(facts.duration))
-            print(f"    {'   '.join(row)}")
-        if facts.lifestyle:
-            print("  [생활 지도]")
-            print(f"    {', '.join(facts.lifestyle)}")
+    print_facts(facts, corrections)
 
     filled = draft_sections(result.report_draft)
     if filled:

@@ -486,3 +486,33 @@ def test_both_runs_even_when_diarization_collapsed(tmp_path, capsys):
     out = capsys.readouterr().out
     assert "화자 구분함" in out and "화자 구분 안 함" in out
     assert "화자분리가 사실상 한 사람만" in out
+
+
+def test_both_shows_the_key_findings_for_each_mode(tmp_path, capsys):
+    """리포트 초안만 견주면 검사 수치와 진단이 안 보인다. 둘 다 보여야 고른다."""
+    from voice_ai.analyze import main
+
+    transcript = tmp_path / "t.json"
+    transcript.write_text(
+        json.dumps(
+            [
+                {"speaker": "speaker_00", "start_ms": 0, "end_ms": 9_000,
+                 "text": "지난번 검사 점수는 30점 만점에 26점이었습니다 소견을 말씀드리겠습니다"},
+                {"speaker": "speaker_01", "start_ms": 10_000, "end_ms": 14_000,
+                 "text": "그러면 어떻게 해야 하나요 많이 걱정돼요"},
+                {"speaker": "speaker_00", "start_ms": 15_000, "end_ms": 24_000,
+                 "text": "오늘은 약을 처방하지 않겠습니다 검사 결과를 확인한 뒤 치료 방향을 정하겠습니다"},
+                {"speaker": "speaker_00", "start_ms": 25_000, "end_ms": 33_000,
+                 "text": "식사는 싱겁게 드시고 운동을 꾸준히 하시는 것이 좋겠습니다"},
+            ],
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    assert main([str(transcript), "--department", "신경과", "--both"]) == 0
+    out = capsys.readouterr().out
+
+    assert out.count("핵심 내용") == 2
+    assert out.count("리포트 초안") == 2
+    assert "26점 (30점 만점)" in out
