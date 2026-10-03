@@ -1,12 +1,11 @@
+import contextlib
+import io
 import json
 from pathlib import Path
 
 from voice_ai import terminology
 from voice_ai.analyze import _diarization_collapsed, analyze_without_speakers, manager_tag
 from voice_ai.clova import group_by_speaker, parse_segments
-import contextlib
-import io
-
 from voice_ai.models import AskedState, Role, SpeakerProfile, Utterance
 from voice_ai.qa import explain_qa, pair_qa
 from voice_ai.roles import classify, doctor_score, sentence_role
