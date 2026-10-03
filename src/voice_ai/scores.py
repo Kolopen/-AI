@@ -30,8 +30,11 @@ from .timeline import UNMARKED, group_by_time
 # 영문자나 숫자에 붙은 숫자는 이름의 일부다. "비타민 b12 점수"의 12 가
 # 12점으로 올라가던 자리다.
 _DIGITS = r"(?<![A-Za-z0-9])(\d{1,3})"
-_OUT_OF = re.compile(_DIGITS + r"\s*점\s*만[가-힣]?\s*(?:에|으로)?\s*(?:는)?\s*" + _DIGITS + r"\s*점")
-_SCORE = re.compile(_DIGITS + r"\s*점")
+# "점수"의 점은 단위가 아니다. 숫자 쪽에도 같은 덫이 있다("비12 점수").
+_OUT_OF = re.compile(
+    _DIGITS + r"\s*점(?!수)\s*만[가-힣]?\s*(?:에|으로)?\s*(?:는)?\s*" + _DIGITS + r"\s*점(?!수)"
+)
+_SCORE = re.compile(_DIGITS + r"\s*점(?!수)")
 
 # "영 점, 십 점으로 해서 적으세요"는 눈금 설명이지 측정값이 아니다.
 # 올리면 "통증 0점"이라는 없던 기록이 남는다.
@@ -39,6 +42,23 @@ _SCALE = re.compile(r"\d{1,3}\s*점\s*(?:으로|로)\s*(?:해서|하고|두고|�
 
 # 아픈 정도는 환자 본인만 안다. 이쪽은 환자 말도 받는다.
 _SELF_REPORTED = re.compile(r"통증|아프|아픔|불편|저림|가렵|가려")
+
+# 한자어 수. 한국어 파인튜닝 모델은 숫자를 한글로 쓴다("이십 육 점").
+# 숫자로 쓰는 모델과 섞어 쓰려면 한쪽으로 맞춰야 한다.
+_SINO = {"영": 0, "공": 0, "일": 1, "이": 2, "삼": 3, "사": 4,
+         "오": 5, "육": 6, "륙": 6, "칠": 7, "팔": 8, "구": 9}
+_SINO_UNITS = {"십": 10, "백": 100}
+_SINO_CHARS = "".join(_SINO) + "".join(_SINO_UNITS)
+
+# 한자어 수는 "점" 이 바로 뒤에 붙었을 때만 읽는다. 단위 없이 읽으면 "검사"의
+# "사"가 4가 되고 "지금"의 "이"가 2가 된다. 앞에 한글이 붙어 있어도 낱말의
+# 일부이므로 읽지 않는다("검사 점수"의 사).
+#
+# "점" 뒤에 "수"가 붙으면 단위가 아니라 "점수"라는 낱말이다. 전사가 "비타민
+# B12"를 "비타민 비시 이 점수치"로 흘렸는데, 그 "이"가 2점이 됐다.
+_SINO_SCORE = re.compile(
+    rf"(?<![가-힣])([{_SINO_CHARS}]+(?:\s+[{_SINO_CHARS}]+)*)\s*([점쩜])(?!수)"
+)
 
 # 점수라고 알아볼 말. 하나도 없으면 "점"이 다른 뜻일 수 있으므로 받지 않는다.
 _SCORE_CONTEXT = re.compile(r"점수|검사|통증|아프|아픔|정도")
@@ -65,6 +85,30 @@ class Score:
     # 이름을 앞 구간에서 이어받았으면 표시한다. 같은 구간에 함께 나왔다는 것
     # 말고는 근거가 없다.
     inferred: bool = False
+
+
+def _sino_value(text: str) -> int | None:
+    """한자어 수 한 덩이를 숫자로 바꾼다. "이십육" -> 26"""
+    total, current = 0, 0
+    for char in text:
+        if char in _SINO:
+            current = _SINO[char]
+        elif char in _SINO_UNITS:
+            total += (current or 1) * _SINO_UNITS[char]
+            current = 0
+        elif not char.isspace():
+            return None
+    return total + current
+
+
+def to_digits(text: str) -> str:
+    """한글로 쓴 점수를 숫자로 바꾼다. 나머지는 건드리지 않는다."""
+
+    def swap(found: re.Match[str]) -> str:
+        value = _sino_value(found.group(1))
+        return found.group() if value is None else f"{value}{found.group(2)}"
+
+    return _SINO_SCORE.sub(swap, text)
 
 
 def _named(text: str, terms: Terminology) -> str | None:
@@ -114,7 +158,9 @@ def extract(
         if here:
             carried = (here, utterance.start_ms)
 
-        found = _values(utterance.text)
+        # 한글로 쓴 점수를 숫자로 맞춰 둔다. 근거 문장은 원문 그대로 남긴다.
+        spoken = to_digits(utterance.text)
+        found = _values(spoken)
         if not found:
             continue
 
@@ -137,7 +183,7 @@ def extract(
         if role is not Role.DOCTOR and not (role is Role.PATIENT and name == PAIN_NAME):
             continue
 
-        buckets = group_by_time(utterance.text)
+        buckets = group_by_time(spoken)
         for value, maximum in found:
             when = next(
                 (marker for marker, values in buckets.items() if value in values), UNMARKED

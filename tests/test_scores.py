@@ -101,3 +101,67 @@ def test_점수_문맥이_없으면_받지_않는다():
     found = extract([Utterance("D", 0, 9_000, "그 점 유의해 주세요")], ROLES, TERMS)
 
     assert found == []
+
+
+def test_한글로_쓴_점수를_읽는다():
+    # 한국어 파인튜닝 모델은 숫자를 한글로 쓴다. 전사가 제일 좋은 모델인데
+    # 숫자를 못 읽으면 그 장점이 통째로 날아간다.
+    from voice_ai.scores import to_digits
+
+    assert to_digits("이십 육 점이었습니다") == "26점이었습니다"
+    assert to_digits("삼십 점 만점") == "30점 만점"
+    assert to_digits("통증은 칠 점 정도요") == "통증은 7점 정도요"
+
+
+def test_단위가_없으면_읽지_않는다():
+    # "검사"의 "사"가 4가 되고 "지금"의 "이"가 2가 된다. "점"이 붙었을 때만 읽는다.
+    from voice_ai.scores import to_digits
+
+    assert to_digits("검사 점수가 어떻게 되나요") == "검사 점수가 어떻게 되나요"
+    assert to_digits("지난번 검사 결과입니다") == "지난번 검사 결과입니다"
+    assert to_digits("오늘은 새 약을 처방하지 않겠습니다") == "오늘은 새 약을 처방하지 않겠습니다"
+
+
+def test_낱말_속_글자는_수가_아니다():
+    # "검사 점수"의 사가 4점이 되면 없는 점수가 생긴다.
+    from voice_ai.scores import to_digits
+
+    assert "4점" not in to_digits("지난 검사 점수는 어떤가요")
+
+
+def test_한글_숫자_점수도_만점과_함께_뽑는다():
+    found = extract(
+        [Utterance("D", 58_000, 68_000, "지난 검사 점수는 삼십 점 만점에 이십 육 점이었습니다")],
+        ROLES,
+        TERMS,
+    )
+
+    assert [(s.value, s.maximum) for s in found] == [("26", "30")]
+    # 근거 문장은 들린 그대로 남는다.
+    assert "삼십 점" in found[0].quote
+
+
+def test_점수라는_낱말은_단위가_아니다():
+    # 전사가 "비타민 B12"를 "비타민 비시 이 점수치"로 흘렸고 그 "이"가 2점이 됐다.
+    from voice_ai.scores import to_digits
+
+    assert to_digits("비타민 비시 이 점수치가 정상범이었습니다") == "비타민 비시 이 점수치가 정상범이었습니다"
+
+    neurology = terminology.load("신경과")
+    found = extract(
+        [Utterance("D", 0, 9_000, "지난번 검사에서 비타민 비시 이 점수치가 정상이었습니다")],
+        ROLES,
+        neurology,
+    )
+    assert found == []
+
+
+def test_숫자_쪽에도_같은_덫이_있다():
+    neurology = terminology.load("신경과")
+    found = extract(
+        [Utterance("D", 0, 9_000, "혈액검사에서 비12 점수 수치가 정상 범위였습니다")],
+        ROLES,
+        neurology,
+    )
+
+    assert found == []
