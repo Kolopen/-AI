@@ -5,7 +5,7 @@ from voice_ai import terminology
 from voice_ai.analyze import _diarization_collapsed, analyze_without_speakers, manager_tag
 from voice_ai.clova import group_by_speaker, parse_segments
 from voice_ai.models import Role, SpeakerProfile, Utterance
-from voice_ai.qa import pair_qa
+from voice_ai.qa import explain_qa, pair_qa
 from voice_ai.roles import classify, doctor_score, sentence_role
 
 FIXTURE = Path(__file__).parent / "fixtures" / "sample_clova.json"
@@ -320,3 +320,31 @@ def test_no_manager_tag_without_enrolment(tmp_path):
     )
 
     assert manager_tag(path) is None
+
+
+def test_why_qa_names_the_reason_each_utterance_was_skipped():
+    """짝이 0건일 때 어디서 끊겼는지 눈으로 갈려야 한다."""
+    utterances, roles = _conversation(
+        ("D", "어디가 불편하신가요?"),
+        ("P", "머리가 아파요"),
+        ("M", "검사를 더 해야 하나요?"),
+    )
+    mode, rows = explain_qa(utterances, roles)
+
+    assert mode == "물음표"
+    assert rows[0][2] == "DOCTOR 라서 건너뜀"
+    assert rows[1][2] == "질문이 아님"
+    assert rows[2][2] == "질문 · 뒤에 의사 발화 없음"
+
+
+def test_why_qa_catches_a_question_lost_to_the_question_mark_rule():
+    """물음표가 한 군데라도 있으면 어미만 있는 질문은 통째로 버려진다."""
+    utterances, roles = _conversation(
+        ("D", "지난번 이후로 어떠셨어요?"),
+        ("P", "약을 계속 먹어야 하나요"),
+        ("D", "네 당분간은 드셔야 합니다"),
+    )
+    mode, rows = explain_qa(utterances, roles)
+
+    assert mode == "물음표"
+    assert rows[1][2] == "의문 어미인데 물음표 방식이라 놓침"

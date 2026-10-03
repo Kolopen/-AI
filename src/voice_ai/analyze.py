@@ -17,7 +17,7 @@ from pathlib import Path
 from . import clovanote, sensevoice, terminology
 from .clova import group_by_speaker
 from .models import AnalysisResult, Method, Role, SpeakerRole, Utterance
-from .qa import pair_qa
+from .qa import explain_qa, pair_qa
 from .report import build_report_draft
 from .roles import classify, sentence_role, split_sentences
 from .crosscheck import cross_check
@@ -278,6 +278,11 @@ def main(argv: list[str] | None = None) -> int:
         help="화자 라벨을 무시하고 문장 단위로 역할을 가른다. 목소리가 하나뿐인 녹음에 쓴다.",
     )
     parser.add_argument(
+        "--why-qa",
+        action="store_true",
+        help="질문-답변이 안 붙는 이유를 발화별로 보여준다.",
+    )
+    parser.add_argument(
         "--date",
         type=dt.date.fromisoformat,
         default=dt.date.today(),
@@ -359,6 +364,14 @@ def main(argv: list[str] | None = None) -> int:
             for line in turn.text.split("\n"):
                 print(f"    {apply_corrections(line, corrections)}")
         print()
+
+    if args.why_qa:
+        mode, rows = explain_qa(labelled, roles_by_tag)
+        print(f"\n질문 판정 ({mode} 방식 · {len(rows)}구간)")
+        for start_ms, role, verdict, text in rows:
+            stamp = f"{start_ms // 60000:02d}:{start_ms // 1000 % 60:02d}"
+            print(f"  [{stamp}] {role:<8} {verdict}")
+            print(f"           {text[:70]}")
 
     print(f"\n질문과 답변 ({len(result.qa_pairs)}건)")
     for pair in result.qa_pairs:

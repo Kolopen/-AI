@@ -119,3 +119,44 @@ def _pair_confidence(question: Utterance, answer: Utterance) -> float:
     """질문 직후에 붙은 답변일수록 신뢰한다."""
     gap_ms = max(0, answer.start_ms - question.end_ms)
     return round(max(0.4, 1.0 - gap_ms / ANSWER_WINDOW_MS), 2)
+
+
+def explain_qa(
+    utterances: list[Utterance], roles: dict[str, Role]
+) -> tuple[str, list[tuple[int, str, str, str]]]:
+    """질문-답변이 안 붙는 이유를 발화별로 돌려준다.
+
+    짝이 0건일 때 어디서 끊겼는지 알아야 고친다. 역할이 아니어서인지, 질문으로
+    안 보여서인지, 뒤에 의사가 없어서인지는 눈으로 봐야 갈린다.
+
+    반환값은 (판정 방식, [(시작 ms, 역할, 판정, 발화)]).
+    """
+    punctuated = any(_QUESTION_MARK.search(u.text) for u in utterances)
+    marker = _QUESTION_MARK if punctuated else QUESTION_PATTERN
+    mode = "물음표" if punctuated else "의문 어미"
+
+    rows: list[tuple[int, str, str, str]] = []
+    for index, utterance in enumerate(utterances):
+        asker = roles.get(utterance.speaker_tag, Role.UNKNOWN)
+        if asker not in (Role.MANAGER, Role.PATIENT):
+            verdict = f"{asker.value} 라서 건너뜀"
+        elif PROXY_QUESTION.search(utterance.text):
+            verdict = "대리 질문"
+        elif marker.search(utterance.text):
+            verdict = "질문"
+        elif QUESTION_PATTERN.search(utterance.text):
+            verdict = f"의문 어미인데 {mode} 방식이라 놓침"
+        else:
+            verdict = "질문이 아님"
+
+        if verdict in ("질문", "대리 질문"):
+            has_answer = any(
+                roles.get(f.speaker_tag, Role.UNKNOWN) is Role.DOCTOR
+                for f in utterances[index + 1 :]
+                if f.start_ms - utterance.end_ms <= ANSWER_WINDOW_MS
+            )
+            if not has_answer:
+                verdict += " · 뒤에 의사 발화 없음"
+
+        rows.append((utterance.start_ms, asker.value, verdict, utterance.text))
+    return mode, rows
