@@ -23,6 +23,22 @@ from .schedule import find_next_visit, mask_dates
 _FINDING = re.compile(r"정상|수치|높|낮|검사|결과|소견|때문에|가능성")
 _NUMBER = re.compile(r"\d")
 
+# 진료의 결론. 숫자가 없어서 위 그물을 빠져나가지만 리포트에 가장 필요한
+# 말이다. 실제 녹음에서 이런 문장들이 통째로 빠졌다.
+#
+#   오늘은 기억력에 대한 약을 처방하지 않겠습니다
+#   검사 결과를 확인한 뒤 치료 방향을 논의하겠습니다
+#   오늘은 MRI 를 예약하고 결과를 보고 추가로 설명드리겠습니다
+#   점수 하나만으로 치매라고 진단하지는 않습니다
+#
+# 의사가 자기 행위를 말하는 자리라 어미까지 묶어서 본다. "진단" 만 보면
+# 환자의 "치매 진단이 뭔가요" 가 걸린다.
+_PLAN = re.compile(
+    r"(?:진단|처방|치료|평가|검사|예약|촬영|복용|조절|추적|관찰|상의|논의|설명)"
+    r"[가-힣\s]{0,6}"
+    r"(?:하겠|드리겠|보겠|겠습니다|합니다|습니다|하지는|하지\s*않|않겠|해야|하세요|드립니다)"
+)
+
 # 복용 주기.
 _SCHEDULE = re.compile(
     r"하루(에)?\s*(한|두|세|네|\d)\s*(번|알|개|정|캡슐)"
@@ -117,7 +133,8 @@ def build_report_draft(
     findings = [
         (u, s)
         for u, s in pairs
-        if _FINDING.search(s) and (_NUMBER.search(mask_dates(s)) or "수치" in s)
+        if (_FINDING.search(s) and (_NUMBER.search(mask_dates(s)) or "수치" in s))
+        or _PLAN.search(s)
     ]
 
     # 전사는 "간 보호제", 사전은 "간보호제"처럼 띄어쓰기가 어긋나므로 공백을 지우고 맞춘다.

@@ -200,3 +200,29 @@ def test_수치로_말한_약은_리포트에_올라가지_않는다():
     )
 
     assert draft.medication_name == ""
+
+
+def test_숫자_없는_진료_결론도_담는다():
+    """실제 녹음에서 진료의 결론이 통째로 빠졌다. 숫자가 없어서였다."""
+    draft = build_report_draft(
+        [
+            Utterance("D", 97_000, 107_000,
+                      "오늘은 기억력에 대한 약을 처방하지 않겠습니다 검사 결과를 확인한 뒤 치료 방향을 논의하겠습니다"),
+            Utterance("D", 90_000, 95_000, "오늘은 MRI를 예약하고 결과를 보고 추가로 설명 드리겠습니다"),
+            Utterance("D", 60_000, 66_000, "점수 하나만으로 치매라고 진단하지는 않습니다"),
+        ],
+        {"D": Role.DOCTOR},
+    )
+
+    notes = draft.treatment_notes
+    assert "처방하지 않겠습니다" in notes
+    assert "예약하고" in notes
+    assert "진단하지는 않습니다" in notes
+
+
+def test_같은_낱말로_묻는_질문은_담지_않는다():
+    """"진단"만 보면 환자의 "치매 진단이 뭔가요"가 진료 내용으로 올라간다."""
+    from voice_ai.report import _PLAN
+
+    for question in ("치매 진단이 뭔가요", "검사 언제 받아요", "약 먹으면 졸려요"):
+        assert not _PLAN.search(question), question
