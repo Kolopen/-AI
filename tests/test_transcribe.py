@@ -539,48 +539,25 @@ def test_the_measured_thresholds_separate_the_real_recording():
         assert kept == (kind == "정상"), text[:30]
 
 
-def test_quiet_speech_is_raised_to_the_target():
-    """작게 담긴 환자 목소리를 의사 수준으로 끌어올린다."""
-    from voice_ai.transcribe import TARGET_RMS, boost_quiet
+def test_level_is_the_rms_of_the_samples():
+    from voice_ai.transcribe import segment_level
 
-    quiet = (np.random.default_rng(0).standard_normal(16_000) * 0.012).astype(np.float32)
-    raised = boost_quiet(quiet)
-
-    assert float(np.sqrt(np.mean(np.square(raised)))) == pytest.approx(TARGET_RMS, rel=0.05)
+    assert segment_level(np.full(100, 0.5, dtype=np.float32)) == pytest.approx(0.5)
+    assert segment_level(np.zeros(100, dtype=np.float32)) == 0.0
+    assert segment_level(np.array([], dtype=np.float32)) == 0.0
 
 
-def test_loud_speech_is_left_alone():
-    """또렷하게 담긴 의사 목소리는 건드리지 않는다. 줄였다 나빠지면 되돌릴 길이 없다."""
-    from voice_ai.transcribe import boost_quiet
+def test_levels_are_measured_per_diarized_turn():
+    """조용한 환자와 또렷한 의사가 숫자로 갈려야 쓸모가 있다."""
+    from voice_ai.transcribe import SAMPLE_RATE, measure_levels
 
-    loud = (np.random.default_rng(1).standard_normal(16_000) * 0.2).astype(np.float32)
-    assert boost_quiet(loud) is loud
+    audio = np.zeros(3 * SAMPLE_RATE, dtype=np.float32)
+    audio[: SAMPLE_RATE] = 0.2
+    audio[SAMPLE_RATE : 2 * SAMPLE_RATE] = 0.01
+    turns = [("speaker_00", 0, 1000), ("speaker_01", 1000, 2000)]
 
+    levels = measure_levels(audio, turns)
 
-def test_near_silence_is_not_amplified_without_limit():
-    """거의 무음을 끝까지 키우면 잡음만 커져서 없던 환각이 생긴다."""
-    from voice_ai.transcribe import MAX_GAIN, boost_quiet
-
-    hiss = (np.random.default_rng(2).standard_normal(16_000) * 0.0001).astype(np.float32)
-    raised = boost_quiet(hiss)
-
-    gain = float(np.max(np.abs(raised))) / float(np.max(np.abs(hiss)))
-    assert gain == pytest.approx(MAX_GAIN, rel=0.01)
-
-
-def test_boosting_never_clips():
-    """키운 뒤 찌그러지면 전사가 더 나빠진다."""
-    from voice_ai.transcribe import PEAK_CEILING, boost_quiet
-
-    spiky = (np.random.default_rng(3).standard_normal(16_000) * 0.01).astype(np.float32)
-    spiky[500] = 0.4
-
-    assert float(np.max(np.abs(boost_quiet(spiky)))) <= PEAK_CEILING
-
-
-def test_silence_survives_boosting():
-    """무음 구간에서 0으로 나누지 않는다."""
-    from voice_ai.transcribe import boost_quiet
-
-    assert not boost_quiet(np.zeros(16_000, dtype=np.float32)).any()
-    assert len(boost_quiet(np.array([], dtype=np.float32))) == 0
+    assert [row[0] for row in levels] == ["speaker_00", "speaker_01"]
+    assert levels[0][3] == pytest.approx(0.2)
+    assert levels[1][3] == pytest.approx(0.01)

@@ -59,48 +59,31 @@ def _clean(text: str) -> str:
     return cleaned if _HANGUL.search(cleaned) else ""
 
 
-# 작게 담긴 구간을 끌어올릴 때 맞출 크기. 사람 말소리의 흔한 수준이다.
-TARGET_RMS = 0.05
-# 이보다 더 키우지 않는다. 거의 무음인 구간을 끝까지 키우면 잡음만 커진다.
-MAX_GAIN = 8.0
-# 키운 뒤 이 값을 넘지 않게 눌러 찌그러짐을 막는다.
-PEAK_CEILING = 0.95
-
-
-def boost_quiet(
-    samples: np.ndarray,
-    *,
-    target_rms: float = TARGET_RMS,
-    max_gain: float = MAX_GAIN,
-    ceiling: float = PEAK_CEILING,
-) -> np.ndarray:
-    """작게 담긴 구간을 끌어올린다.
-
-    whisper 는 고르게 녹음된 음성으로 배웠다. 작게 담긴 말은 배운 적 없는 입력
-    이라 디코더가 소리 대신 언어 모델로 메우고, 그게 환각이 된다. 실제 진료
-    녹음의 환자 구간에서 "고속도로 교통정보고 좋습니다", "애플의 베풍과 이혼은
-    새 액체에 밥을 먹었습니다" 같은 방송 말투가 나왔다. 같은 녹음에서 의사
-    구간은 멀쩡했다. 녹음기가 매니저 폰에 있고 환자는 고령이라 소리가 작다.
-
-    키우기만 하고 줄이지는 않는다. 또렷하게 담긴 의사 목소리를 건드릴 이유가
-    없고, 줄였다가 나빠지면 되돌릴 길이 없다.
-    """
+def segment_level(samples: np.ndarray) -> float:
+    """구간의 소리 크기. 사람 말소리는 보통 0.03~0.1 사이에 든다."""
     if len(samples) == 0:
-        return samples
-    rms = float(np.sqrt(np.mean(np.square(samples))))
-    if rms <= 0.0:
-        return samples
+        return 0.0
+    return float(np.sqrt(np.mean(np.square(samples))))
 
-    gain = min(target_rms / rms, max_gain)
-    if gain <= 1.0:
-        return samples
 
-    peak = float(np.max(np.abs(samples)))
-    if peak > 0.0:
-        gain = min(gain, ceiling / peak)
-    if gain <= 1.0:
-        return samples
-    return (samples * gain).astype(np.float32)
+def measure_levels(
+    audio: np.ndarray, turns: list[tuple[str, int, int]]
+) -> list[tuple[str, int, int, float]]:
+    """화자별로 얼마나 크게 담겼는지 잰다.
+
+    전사가 사람마다 갈릴 때 소리 크기 탓인지부터 봐야 한다. 환자가 작게 담긴
+    것이라면 녹음기 위치를 바꾸면 되고, 크기가 같은데도 안 들리는 것이라면
+    반향이나 잡음 문제라 자리를 옮긴다고 해결되지 않는다.
+    """
+    return [
+        (
+            speaker,
+            start_ms,
+            end_ms,
+            segment_level(audio[int(start_ms * SAMPLE_RATE / 1000) : int(end_ms * SAMPLE_RATE / 1000)]),
+        )
+        for speaker, start_ms, end_ms in turns
+    ]
 
 
 def _quietest_point(samples: np.ndarray, target: int, search: int) -> int:
@@ -513,7 +496,7 @@ def transcribe_turns(
             if len(part) < min_samples:
                 continue
             stream = recognizer.create_stream()
-            stream.accept_waveform(SAMPLE_RATE, boost_quiet(part))
+            stream.accept_waveform(SAMPLE_RATE, part)
             recognizer.decode_stream(stream)
 
             raw = _clean(stream.result.text)
@@ -571,7 +554,7 @@ def transcribe(
 
             for offset, piece in _split_long(samples, max_samples):
                 stream = recognizer.create_stream()
-                stream.accept_waveform(SAMPLE_RATE, boost_quiet(piece))
+                stream.accept_waveform(SAMPLE_RATE, piece)
                 recognizer.decode_stream(stream)
 
                 raw = _clean(stream.result.text)
@@ -688,6 +671,23 @@ def _mark_manager(
     return [{**chunk, "is_manager": chunk["speaker"] == tag} for chunk in chunks]
 
 
+def _print_levels(levels: list[tuple[str, int, int, float]]) -> None:
+    """화자별 소리 크기를 사람이 읽게 찍는다."""
+    print(f"\n구간별 소리 크기 ({len(levels)}구간)")
+    for speaker, start_ms, end_ms, rms in levels:
+        stamp = f"{start_ms // 60000:02d}:{start_ms // 1000 % 60:02d}"
+        seconds = (end_ms - start_ms) / 1000
+        print(f"  [{stamp}] {speaker}  {seconds:5.1f}초  크기 {rms:.4f}")
+
+    by_speaker: dict[str, list[float]] = {}
+    for speaker, _, _, rms in levels:
+        by_speaker.setdefault(speaker, []).append(rms)
+    print("\n화자별 평균")
+    for speaker, values in sorted(by_speaker.items()):
+        print(f"  {speaker}  {sum(values) / len(values):.4f}  ({len(values)}구간)")
+    print("\n사람 말소리는 보통 0.03~0.1 입니다. 한 화자만 유독 낮으면 녹음기 위치 문제입니다.")
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="녹음 파일을 SenseVoice로 전사한다.")
     parser.add_argument("audio", type=Path, help="녹음 파일 (m4a, wav, mp3 등)")
@@ -726,6 +726,11 @@ def main(argv: list[str] | None = None) -> int:
         type=int,
         default=-1,
         help="화자 수를 알면 지정한다. 진료는 보통 2명(의사·환자) 또는 3명(매니저 포함).",
+    )
+    parser.add_argument(
+        "--levels",
+        action="store_true",
+        help="전사하지 않고 화자별 소리 크기만 잰다. 전사가 사람마다 갈릴 때 쓴다.",
     )
     parser.add_argument("--out", type=Path, default=Path("chunks.json"))
     parser.add_argument("--threads", type=int, default=4)
@@ -768,6 +773,26 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--segmentation(+--embedding) 또는 --vad 중 하나는 있어야 합니다.")
     if args.segmentation and not args.embedding:
         parser.error("--segmentation을 쓰려면 --embedding도 필요합니다.")
+
+    if args.levels:
+        if not args.segmentation:
+            parser.error("--levels 에는 --segmentation 과 --embedding 이 필요합니다.")
+        audio = load_audio(args.audio)
+        print(f"오디오 {len(audio) / SAMPLE_RATE:.1f}초를 읽었습니다.")
+        print("화자를 나누는 중입니다...")
+        _print_levels(
+            measure_levels(
+                audio,
+                diarize(
+                    audio,
+                    segmentation_model=args.segmentation,
+                    embedding_model=args.embedding,
+                    num_speakers=args.speakers,
+                    num_threads=args.threads,
+                ),
+            )
+        )
+        return 0
 
     missing = [f"--{name}" for name in ENGINE_FILES[args.engine] if getattr(args, name) is None]
     if missing:
