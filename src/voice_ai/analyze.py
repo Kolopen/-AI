@@ -264,6 +264,10 @@ def manager_tag(path: Path) -> str | None:
     return next(iter(tags)) if len(tags) == 1 else None
 
 
+# 리포트 줄 앞의 "[01:18]". 역할을 볼 때는 떼고 본다.
+_TIMESTAMP = re.compile(r"^\s*\[\d\d:\d\d\]\s*")
+
+
 def draft_sections(draft: ReportDraft) -> list[tuple[str, str]]:
     """리포트 초안에서 내용이 있는 항목만 순서대로."""
     sections = [
@@ -278,21 +282,47 @@ def draft_sections(draft: ReportDraft) -> list[tuple[str, str]]:
     return [(label, body) for label, body in sections if body]
 
 
-def _print_draft(title: str, draft: ReportDraft, corrections: list) -> None:
+def doubtful(line: str, medical_terms: frozenset[str]) -> bool:
+    """화자는 의사라는데 문장만 보면 의사 말투가 아닌지.
+
+    걸러내지 않고 표시만 한다. 걸러 보니 진짜 의사 문장 열 개 중 넷이 같이
+    날아갔다. "오늘은 MRI 를 예약하고 결과를 보고 설명드리겠습니다" 처럼
+    진료의 결론이 빠지는 자리였다.
+
+    반대로 섞여 들어온 쪽은 잘 걸린다. 화자분리가 무너진 녹음에서 환자와
+    매니저 말 넷이 모두 여기 잡혔다. 의사 신호는 처방·진단 같은 말인데
+    비의사의 서술문에는 그런 말이 없어서다.
+    """
+    role, _ = sentence_role(_TIMESTAMP.sub("", line), medical_terms=medical_terms)
+    return role is not Role.DOCTOR
+
+
+def _print_draft(
+    title: str, draft: ReportDraft, corrections: list, medical_terms: frozenset[str]
+) -> int:
     print(f"\n════ {title} ════")
     filled = draft_sections(draft)
     if not filled:
         print("  (비어 있습니다)")
-        return
+        return 0
+
+    marked = 0
     for label, body in filled:
         print(f"  [{label}]")
         for line in body.splitlines():
-            print(f"    {apply_corrections(line, corrections)}")
-    print("  [요약] 매니저가 작성합니다.")
+            flag = " "
+            if doubtful(line, medical_terms):
+                flag, marked = "?", marked + 1
+            print(f"  {flag} {apply_corrections(line, corrections)}")
+    print("    [요약] 매니저가 작성합니다.")
+    return marked
 
 
 def print_both_drafts(
-    with_speakers: ReportDraft, without_speakers: ReportDraft, corrections: list
+    with_speakers: ReportDraft,
+    without_speakers: ReportDraft,
+    corrections: list,
+    medical_terms: frozenset[str] = frozenset(),
 ) -> None:
     """같은 전사를 두 방식으로 돌린 리포트를 나란히 놓는다.
 
@@ -300,8 +330,14 @@ def print_both_drafts(
     문장마다 가르는 쪽은 섞지 않는 대신 의사 발언을 흘린다. 어느 쪽이
     나은지는 녹음마다 다르므로 눈으로 보고 고르게 한다.
     """
-    _print_draft("화자 구분함", with_speakers, corrections)
-    _print_draft("화자 구분 안 함", without_speakers, corrections)
+    left_marked = _print_draft("화자 구분함", with_speakers, corrections, medical_terms)
+    right_marked = _print_draft("화자 구분 안 함", without_speakers, corrections, medical_terms)
+    if left_marked or right_marked:
+        print(
+            "\n  ? 는 문장만 보면 의사 말투가 아닌 줄입니다. 화자분리가 환자나 매니저 말을"
+            "\n    섞어 넣었을 수 있으니 매니저가 확인해야 합니다. 의사 말인데 표시되는"
+            f"\n    경우도 있습니다. 화자 구분함 {left_marked}줄, 구분 안 함 {right_marked}줄."
+        )
 
     left = dict(draft_sections(with_speakers))
     right = dict(draft_sections(without_speakers))
@@ -412,13 +448,17 @@ def main(argv: list[str] | None = None) -> int:
             "녹음에 목소리가 하나뿐이거나 화자분리가 실패한 것입니다."
         )
     if args.both:
-        if not has_speakers:
+        # 붕괴 판정으로 내려간 경우에도 둘 다 보여준다. 오히려 그때가 두
+        # 리포트가 가장 크게 갈리는 자리라 눈으로 봐야 한다.
+        if not any(u.speaker_tag for u in utterances):
             print(
                 "이 전사에는 화자 라벨이 없어 비교할 것이 없습니다. "
                 "--segmentation 으로 전사해야 합니다.",
                 file=sys.stderr,
             )
             return 1
+        for line in warnings:
+            print(f"  ! {line}")
         grouped = analyze_with_speakers(
             utterances,
             terms=terms,
@@ -434,6 +474,7 @@ def main(argv: list[str] | None = None) -> int:
             grouped.report_draft,
             split.report_draft,
             find_corrections(utterances, set(terms.all_terms), terms.misheard),
+            frozenset(terms.conditions) | frozenset(terms.tests) | frozenset(terms.drugs),
         )
         return 0
 

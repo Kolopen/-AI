@@ -447,3 +447,42 @@ def test_both_drafts_say_when_nothing_differs():
         print_both_drafts(same, ReportDraft(treatment_notes="[01:18] 같은 줄"), [])
 
     assert "두 리포트가 같습니다" in printed.getvalue()
+
+
+def test_a_patients_line_in_the_draft_is_marked():
+    """화자분리가 환자 말을 의사 쪽에 섞으면 리포트에 그대로 들어간다."""
+    from voice_ai.analyze import doubtful
+
+    assert doubtful("[02:28] 아침에 조금 졸려요 약 때문인지 모르겠는데요", frozenset())
+    assert doubtful("[02:32] 보호자분도 졸려 보인다고 말씀하셔서 여쭤봅니다", frozenset())
+
+
+def test_a_doctors_line_is_not_marked():
+    from voice_ai.analyze import doubtful
+
+    assert not doubtful("[03:07] 매일 복용하도록 처방한 약과 필요할 때 복용하는 약은 구분하세요", frozenset())
+
+
+def test_both_runs_even_when_diarization_collapsed(tmp_path, capsys):
+    """두 리포트가 가장 크게 갈리는 자리가 바로 붕괴한 녹음이다."""
+    from voice_ai.analyze import main
+
+    transcript = tmp_path / "t.json"
+    transcript.write_text(
+        json.dumps(
+            [
+                {"speaker": "speaker_00", "start_ms": 0, "end_ms": 9_000,
+                 "text": "매일 복용하도록 처방한 약과 필요할 때 복용하는 약은 구분하세요"},
+                {"speaker": "speaker_00", "start_ms": 10_000, "end_ms": 14_000,
+                 "text": "아침에 조금 졸려요 약 때문인지 모르겠는데요"},
+                {"speaker": "speaker_01", "start_ms": 20_000, "end_ms": 21_000, "text": "네"},
+            ],
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    assert main([str(transcript), "--both"]) == 0
+    out = capsys.readouterr().out
+    assert "화자 구분함" in out and "화자 구분 안 함" in out
+    assert "화자분리가 사실상 한 사람만" in out
