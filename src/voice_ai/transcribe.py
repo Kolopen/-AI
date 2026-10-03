@@ -139,7 +139,10 @@ def default_max_chunk(engine: str) -> float:
 # 2초를 넘겨도 맞는 말이 버려진다("감사합니다" 0.86초, "결국 어디서
 # 찾았을까요" 1.52초). 그래도 지어낸 문장이 리포트에 들어가는 것보다 낫다.
 # 빠진 것은 눈에 보이고 지어낸 것은 보이지 않는다.
-MIN_CHUNK_SECONDS = {"faster-whisper": 2.0, "whisper": 2.0}
+# faster-whisper 는 모델이 내놓는 신호로 거르므로 길이로는 거의 안 자른다.
+# 0.5초 미만은 화자분리가 남긴 부스러기라 어차피 건질 것이 없다. sherpa 쪽
+# whisper 는 그 신호를 꺼내 쓸 수 없어 길이로만 막는다.
+MIN_CHUNK_SECONDS = {"faster-whisper": 0.6, "whisper": 2.0}
 FALLBACK_MIN_CHUNK = 0.1
 
 
@@ -192,6 +195,18 @@ def _model_hint(model: str, error: Exception) -> str:
     return f"모델을 못 불러왔습니다: {model}\n{text}"
 
 
+# 모델이 스스로 내놓는 세 가지 신호. 길이로 거르는 것보다 정확하다. 짧아도
+# 확신하면 남기고, 길어도 지어낸 것이면 버린다. 실제 녹음에서 4.37초짜리
+# 환각("애플의 베풍과 이혼은 새 액체에 밥을 먹었습니다")은 길이로는 못 걸렀다.
+#
+# no_speech_prob  이 구간이 묵음일 확률. 높은데 글자가 나왔으면 지어낸 것이다.
+# avg_logprob     디코더의 평균 확신도. 낮으면 끌어다 맞춘 것이다.
+# compression_ratio  같은 말이 되풀이될수록 커진다.
+NO_SPEECH_MAX = 0.6
+AVG_LOGPROB_MIN = -1.0
+COMPRESSION_MAX = 2.4
+
+
 class _Stream:
     """sherpa-onnx 스트림과 같은 모양. 오디오를 받아 두었다가 한 번에 돌린다."""
 
@@ -201,6 +216,15 @@ class _Stream:
 
     def accept_waveform(self, sample_rate: int, audio) -> None:
         self.audio = np.asarray(audio, dtype=np.float32)
+
+
+def confident(segment) -> bool:
+    """모델이 스스로 내놓은 신호로 지어낸 구간을 가린다."""
+    return (
+        segment.no_speech_prob <= NO_SPEECH_MAX
+        and segment.avg_logprob >= AVG_LOGPROB_MIN
+        and segment.compression_ratio <= COMPRESSION_MAX
+    )
 
 
 class FasterWhisper:
@@ -236,6 +260,25 @@ class FasterWhisper:
     def create_stream(self) -> _Stream:
         return _Stream()
 
+    def explain(self, audio) -> list[tuple]:
+        """구간 하나를 돌려 보고 모델이 내놓은 신호를 그대로 보여준다.
+
+        기준을 손으로 정할 때 쓴다. 숫자를 안 보고 정하면 또 틀린다.
+        """
+        segments, _ = self.model.transcribe(
+            audio,
+            language=self.language,
+            hotwords=self.hotwords,
+            beam_size=5,
+            condition_on_previous_text=False,
+            vad_filter=False,
+        )
+        return [
+            (s.text.strip(), round(s.no_speech_prob, 3), round(s.avg_logprob, 3),
+             round(s.compression_ratio, 2), confident(s))
+            for s in segments
+        ]
+
     def decode_stream(self, stream: _Stream) -> None:
         segments, _ = self.model.transcribe(
             stream.audio,
@@ -249,7 +292,13 @@ class FasterWhisper:
             # 화자분리로 이미 구간을 끊었다.
             vad_filter=False,
         )
-        stream.result.text = " ".join(s.text.strip() for s in segments).strip()
+        kept = [s for s in segments if confident(s)]
+        self.last = [
+            (s.text.strip(), round(s.no_speech_prob, 3), round(s.avg_logprob, 3),
+             round(s.compression_ratio, 2), confident(s))
+            for s in kept
+        ]
+        stream.result.text = " ".join(s.text.strip() for s in kept).strip()
 
 
 def build_recognizer(

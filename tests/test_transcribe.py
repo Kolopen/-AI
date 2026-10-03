@@ -453,10 +453,32 @@ def test_an_unknown_failure_keeps_the_original_message():
 def test_whisper_skips_short_chunks():
     # whisper 는 30초 창으로 학습돼서 0.3초를 주면 나머지를 묵음으로 채우고,
     # 디코더가 그 빈자리를 학습 데이터에서 본 문장으로 메운다.
+    #
+    # faster-whisper 는 모델이 내놓는 신호로 거르므로 길이로는 거의 안 자른다.
+    # sherpa 쪽 whisper 는 그 신호를 꺼내 쓸 수 없어 길이로만 막는다.
     from voice_ai.transcribe import default_min_chunk
 
-    assert default_min_chunk("faster-whisper") == 2.0
+    assert default_min_chunk("faster-whisper") == 0.6
+    assert default_min_chunk("whisper") == 2.0
     assert default_min_chunk("sensevoice") == 0.1
+
+
+def test_the_model_tells_us_when_it_made_something_up():
+    # 길이로 거르면 4.37초짜리 환각을 못 막고 짧고 멀쩡한 질문을 버린다.
+    # 모델은 스스로 세 가지 신호를 내놓는다.
+    from types import SimpleNamespace
+
+    from voice_ai.transcribe import confident
+
+    def segment(no_speech=0.05, logprob=-0.3, compression=1.4):
+        return SimpleNamespace(
+            no_speech_prob=no_speech, avg_logprob=logprob, compression_ratio=compression
+        )
+
+    assert confident(segment())
+    assert not confident(segment(no_speech=0.92))   # 묵음인데 글자가 나왔다
+    assert not confident(segment(logprob=-1.6))     # 끌어다 맞췄다
+    assert not confident(segment(compression=3.9))  # 같은 말을 되풀이했다
 
 
 def test_a_phrase_said_three_times_is_a_decoder_loop():
