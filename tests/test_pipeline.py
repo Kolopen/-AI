@@ -4,7 +4,7 @@ from pathlib import Path
 from voice_ai import terminology
 from voice_ai.analyze import _diarization_collapsed, analyze_without_speakers, manager_tag
 from voice_ai.clova import group_by_speaker, parse_segments
-from voice_ai.models import Role, SpeakerProfile, Utterance
+from voice_ai.models import AskedState, Role, SpeakerProfile, Utterance
 from voice_ai.qa import explain_qa, pair_qa
 from voice_ai.roles import classify, doctor_score, sentence_role
 
@@ -47,11 +47,11 @@ def test_voiceprint_lock_keeps_manager_fixed():
 
 
 def test_pairs_manager_questions_with_doctor_answers():
-    pairs, unasked = pair_qa(load_utterances(), role_map())
+    pairs, registered = pair_qa(load_utterances(), role_map())
     questions = [p.question for p in pairs]
     assert any("혈압약" in q for q in questions)
     assert any("다음 진료" in q for q in questions)
-    assert unasked == []
+    assert registered == []
 
     blood_pressure = next(p for p in pairs if "혈압약" in p.question)
     assert blood_pressure.asked_by is Role.MANAGER
@@ -59,16 +59,55 @@ def test_pairs_manager_questions_with_doctor_answers():
     assert "식후에 드세요" in blood_pressure.answer
 
 
-def test_detects_unasked_pre_registered_question():
-    registered = {
+def test_a_guardian_question_finds_its_doctor_answer():
+    """보호자 질문은 글로 이미 있다. 녹음에서 알아낼 것은 의사 답변뿐이다."""
+    asked = {
         "q_bp": "지금 드시는 혈압약이랑 같이 먹어도 되나요?",
         "q_diet": "식사할 때 피해야 할 음식이 있나요?",
     }
-    pairs, unasked = pair_qa(load_utterances(), role_map(), registered_questions=registered)
+    _, registered = pair_qa(load_utterances(), role_map(), registered_questions=asked)
+    found = {r.question_id: r for r in registered}
 
-    matched = {p.pre_registered_question_id for p in pairs}
-    assert "q_bp" in matched
-    assert unasked == ["q_diet"]
+    assert found["q_bp"].state is AskedState.CONFIRMED
+    assert found["q_bp"].pair is not None
+    assert "식후에 드세요" in found["q_bp"].pair.answer
+
+
+def test_a_question_we_cannot_find_is_not_called_unasked():
+    """못 찾은 것과 안 물어본 것은 다르다. 약한 고리는 우리 전사다."""
+    asked = {"q_diet": "식사할 때 피해야 할 음식이 있나요?"}
+    _, registered = pair_qa(load_utterances(), role_map(), registered_questions=asked)
+
+    assert registered[0].state is AskedState.UNCONFIRMED
+    assert registered[0].pair is None
+
+
+def test_a_loose_match_is_only_probable():
+    """전사가 흔들려 반쯤만 겹치면 물었다고 단정하지 않는다."""
+    utterances, roles = _conversation(
+        ("M", "혈압약이랑 같이 드셔도"),
+        ("D", "네 괜찮습니다 식후에 드세요"),
+    )
+    _, registered = pair_qa(
+        utterances, roles, registered_questions={"q_bp": "지금 드시는 혈압약이랑 같이 먹어도 되나요?"}
+    )
+
+    assert registered[0].state is AskedState.LIKELY
+    assert registered[0].pair is not None
+
+
+def test_a_question_asked_from_the_doctor_cluster_is_only_probable():
+    """화자분리가 매니저를 의사 쪽에 합쳐도 찾기는 한다. 다만 확정하지 않는다."""
+    utterances, roles = _conversation(
+        ("D", "지금 드시는 혈압약이랑 같이 먹어도 되나요"),
+        ("D", "네 괜찮습니다 식후에 드세요"),
+    )
+    _, registered = pair_qa(
+        utterances, roles, registered_questions={"q_bp": "지금 드시는 혈압약이랑 같이 먹어도 되나요?"}
+    )
+
+    assert registered[0].score > 0.9
+    assert registered[0].state is AskedState.LIKELY
 
 
 def _over_segmented():
@@ -348,3 +387,31 @@ def test_why_qa_catches_a_question_lost_to_the_question_mark_rule():
 
     assert mode == "물음표"
     assert rows[1][2] == "의문 어미인데 물음표 방식이라 놓침"
+
+
+def test_the_doctors_answer_is_not_mistaken_for_the_question():
+    """답변은 질문의 낱말을 되풀이한다. 겹치는 정도만 보면 답변이 1등이 된다."""
+    utterances, roles = _conversation(
+        ("D", "지난검사 점수는 삼십 쩜 만쯤에 이십 육 점이었습니다"),
+        ("D", "다른 검사 결과도 함께 봐야 합니다"),
+    )
+    _, registered = pair_qa(
+        utterances, roles, registered_questions={"q": "검사 점수가 얼마나 나왔나요?"}
+    )
+
+    assert registered[0].state is AskedState.UNCONFIRMED
+    assert registered[0].pair is None
+
+
+def test_an_answer_stops_at_the_next_question():
+    """화자분리가 매니저를 의사 쪽에 합치면 뒤 질문까지 답변으로 삼킨다."""
+    utterances, roles = _conversation(
+        ("M", "혈압약이랑 같이 먹어도 되나요?"),
+        ("D", "네 괜찮습니다"),
+        ("D", "그러면 운전은 해도 되나요?"),
+        ("D", "운전은 당분간 피하세요"),
+    )
+    pairs, _ = pair_qa(utterances, roles)
+
+    first = next(p for p in pairs if "혈압약" in p.question)
+    assert first.answer == "네 괜찮습니다"

@@ -113,13 +113,37 @@ class ReportDraft:
     next_visit_note: str = ""
 
 
+class AskedState(str, Enum):
+    """보호자 질문을 매니저가 물었는지.
+
+    "안 물어봤다" 를 단정하지 않는다. 우리 전사가 약한 고리인데 그걸 근거로
+    매니저가 질문을 빠뜨렸다고 기록하면 사람에게 부당하다. 못 찾았으면
+    못 찾았다고만 적고 매니저가 확인하게 둔다.
+    """
+
+    CONFIRMED = "CONFIRMED"
+    LIKELY = "LIKELY"
+    UNCONFIRMED = "UNCONFIRMED"
+
+
+@dataclass
+class RegisteredQuestion:
+    """보호자가 미리 남긴 질문 하나와 그 결과."""
+
+    question_id: str
+    text: str
+    state: AskedState
+    score: float = 0.0
+    pair: QAPair | None = None
+
+
 @dataclass
 class AnalysisResult:
     """온프레미스 AI가 Core API로 돌려주는 최종 산출물."""
 
     speakers: list[SpeakerRole] = field(default_factory=list)
     qa_pairs: list[QAPair] = field(default_factory=list)
-    unasked_question_ids: list[str] = field(default_factory=list)
+    registered: list[RegisteredQuestion] = field(default_factory=list)
     report_draft: ReportDraft = field(default_factory=ReportDraft)
     warnings: list[str] = field(default_factory=list)
     # 역할이 확정된 발화. 화자 라벨이 있으면 입력 그대로이고, 문장 단위로

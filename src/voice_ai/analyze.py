@@ -14,9 +14,17 @@ import sys
 from dataclasses import asdict
 from pathlib import Path
 
-from . import clovanote, sensevoice, terminology
+from . import clovanote, questions, sensevoice, terminology
 from .clova import group_by_speaker
-from .models import AnalysisResult, Method, Role, SpeakerRole, Utterance
+from .models import (
+    AnalysisResult,
+    AskedState,
+    Method,
+    RegisteredQuestion,
+    Role,
+    SpeakerRole,
+    Utterance,
+)
 from .qa import explain_qa, pair_qa
 from .report import build_report_draft
 from .roles import classify, sentence_role, split_sentences
@@ -50,6 +58,7 @@ def analyze_without_speakers(
     *,
     terms: terminology.Terminology,
     consult_date: dt.date | None = None,
+    questions: dict[str, str] | None = None,
 ) -> AnalysisResult:
     """화자 라벨이 없는 전사. 문장별로 역할을 가른다."""
     sentences = _split_into_sentences(utterances)
@@ -80,7 +89,7 @@ def analyze_without_speakers(
     ]
 
     roles = {r.speaker_tag: r.role for r in speakers}
-    pairs, unasked = pair_qa(labelled, roles)
+    pairs, registered = pair_qa(labelled, roles, registered_questions=questions)
     unknown = len(confidence_by_role.get(Role.UNKNOWN, []))
     warnings = []
     if unknown:
@@ -92,7 +101,7 @@ def analyze_without_speakers(
     return AnalysisResult(
         speakers=speakers,
         qa_pairs=pairs,
-        unasked_question_ids=unasked,
+        registered=registered,
         report_draft=build_report_draft(
             labelled, roles, drug_terms=terms.drugs, test_terms=terms.tests, consult_date=consult_date
         ),
@@ -194,6 +203,7 @@ def analyze_with_speakers(
     compare_with: list[Utterance] | None = None,
     consult_date: dt.date | None = None,
     manager_speaker_tag: str | None = None,
+    questions: dict[str, str] | None = None,
 ) -> AnalysisResult:
     """화자 라벨이 있는 전사. 화자 단위로 역할을 가른다."""
     speakers, warnings = classify(
@@ -217,11 +227,11 @@ def analyze_with_speakers(
             "나온 것이라면 --merge-non-doctor 로 합쳐서 다시 분석하세요. "
             "녹음 단계에서 --speakers 로 인원을 지정하는 편이 더 낫습니다."
         )
-    pairs, unasked = pair_qa(utterances, roles)
+    pairs, registered = pair_qa(utterances, roles, registered_questions=questions)
     return AnalysisResult(
         speakers=speakers,
         qa_pairs=pairs,
-        unasked_question_ids=unasked,
+        registered=registered,
         report_draft=build_report_draft(
             utterances, roles, drug_terms=terms.drugs, test_terms=terms.tests, consult_date=consult_date
         ),
@@ -253,6 +263,28 @@ def manager_tag(path: Path) -> str | None:
     return next(iter(tags)) if len(tags) == 1 else None
 
 
+def _print_registered(registered: list[RegisteredQuestion]) -> None:
+    """보호자 질문마다 의사가 뭐라고 답했는지."""
+    label = {
+        AskedState.CONFIRMED: "물어봄  ",
+        AskedState.LIKELY: "아마 물어봄",
+        AskedState.UNCONFIRMED: "못 찾음 ",
+    }
+    confirmed = sum(1 for r in registered if r.state is AskedState.CONFIRMED)
+    print(f"\n보호자 질문 ({len(registered)}건 중 {confirmed}건 확인)")
+
+    for item in registered:
+        print(f"  {label[item.state]}  [{item.question_id}] {item.text}")
+        if item.pair is None:
+            print("      녹음에서 이 질문을 찾지 못했습니다. 매니저가 확인해 주세요.")
+            continue
+        stamp = f"{item.pair.question_at_ms // 60000:02d}:{item.pair.question_at_ms // 1000 % 60:02d}"
+        print(f"      물음  [{stamp}] ({item.pair.asked_by.value}) {item.pair.question}")
+        print(f"      답변  {item.pair.answer}")
+        if item.state is AskedState.LIKELY:
+            print(f"      일치도 {item.score} 라 확정하지 않았습니다. 매니저가 확인해 주세요.")
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="진료 전사를 분석해 리포트 초안을 만든다.")
     parser.add_argument("transcript", type=Path, help="클로바노트 .txt 또는 SenseVoice .json")
@@ -278,6 +310,11 @@ def main(argv: list[str] | None = None) -> int:
         help="화자 라벨을 무시하고 문장 단위로 역할을 가른다. 목소리가 하나뿐인 녹음에 쓴다.",
     )
     parser.add_argument(
+        "--questions",
+        type=Path,
+        help="보호자가 미리 남긴 질문 파일. 줄마다 하나씩, 'id = 질문' 형식도 받는다.",
+    )
+    parser.add_argument(
         "--why-qa",
         action="store_true",
         help="질문-답변이 안 붙는 이유를 발화별로 보여준다.",
@@ -295,6 +332,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     terms = terminology.load(args.department)
+    asked = questions.load(args.questions) if args.questions else {}
     utterances, warnings = load(args.transcript)
     if not utterances:
         print("전사 내용이 비어 있습니다.", file=sys.stderr)
@@ -318,9 +356,12 @@ def main(argv: list[str] | None = None) -> int:
             compare_with=compare,
             consult_date=args.date,
             manager_speaker_tag=manager_tag(args.transcript),
+            questions=asked,
         )
         if has_speakers
-        else analyze_without_speakers(utterances, terms=terms, consult_date=args.date)
+        else analyze_without_speakers(
+            utterances, terms=terms, consult_date=args.date, questions=asked
+        )
     )
     result.warnings = warnings + result.warnings
 
@@ -373,7 +414,10 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  [{stamp}] {role:<8} {verdict}")
             print(f"           {text[:70]}")
 
-    print(f"\n질문과 답변 ({len(result.qa_pairs)}건)")
+    if result.registered:
+        _print_registered(result.registered)
+
+    print(f"\n현장에서 나온 질문 ({len(result.qa_pairs)}건)")
     for pair in result.qa_pairs:
         print(f"  [{pair.question_at_ms // 1000}초] ({pair.asked_by.value}) {pair.question}")
         print(f"        -> {pair.answer[:80]}")
